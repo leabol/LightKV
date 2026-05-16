@@ -1,0 +1,35 @@
+#pragma once 
+
+#include "TcpConnection.hpp"
+#include "TcpServer.hpp"
+#include "buffer.hpp"
+#include "request.hpp"
+#include "response.hpp"
+#include <netinet/tcp.h>
+#include <unordered_map>
+#include <string>
+#include "dispatcher.hpp"
+
+namespace server{
+using Storage =  std::unordered_map<std::string, std::string>;
+using namespace protocol;
+
+class KvServer {
+public:
+  explicit KvServer(net::EventLoop *loop, const net::InetAddress &listenAddr);
+
+  // Start listening
+  void start();
+
+  void onMessage(const net::TcpServer::TcpConnectionPtr& conn, net::Buffer& inputBuffer);
+
+private:
+  Response handleGET(const Request& req, Storage& storage);
+  Response handleSET(const Request& req, Storage& storage);
+  Response handleDEL(const Request& req, Storage& storage);
+
+  Storage storage_;
+  net::TcpServer server_;
+  Dispatcher dispatcher_;
+};
+} // namespace server
