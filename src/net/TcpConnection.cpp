@@ -11,7 +11,6 @@
 #include "Log.hpp"
 #include "Socket.hpp"
 #include "buffer.hpp"
-#include "../protocol/parser.hpp"
 
 namespace net {
 

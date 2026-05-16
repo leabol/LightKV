@@ -1,9 +1,10 @@
 #include "EventLoop.hpp"
 #include "InetAddress.hpp"
 #include "server/kv_server.hpp"
-#include <iostream>
+#include "Log.hpp"
 
 int main(int argc, char** argv) {
+    Server::setLevel(spdlog::level::off);
 	std::string port = "8990";
 	if (argc > 1) {
 		port = argv[1];
