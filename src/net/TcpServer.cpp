@@ -5,6 +5,7 @@
 #include "InetAddress.hpp"
 #include "Log.hpp"
 #include "TcpConnection.hpp"
+#include <mutex>
 
 namespace net {
 
@@ -25,12 +26,34 @@ TcpServer::~TcpServer() {
 }
 
 void TcpServer::start() {
-    acceptor_.listen();
+    thread_ = std::thread([this] { this->threadFunc(); });
+    {
+        std::unique_lock<std::mutex> lock(cond_mutex_);
+        cond_.wait(lock,[this]{
+            return eventloop_ != nullptr;
+        });
+    }
+    // Start accepting on the provided loop (no extra thread by default)
+    loop_->runInLoop([this]() { acceptor_.listen(); });
     LOG_INFO("TcpServer listening started");
 }
 
+void TcpServer::threadFunc(){
+    EventLoop loop;
+
+    {
+        std::lock_guard<std::mutex> lock(cond_mutex_);
+        eventloop_ = &loop;
+    }
+    cond_.notify_all();
+
+    loop.loop(10000);
+}
+
 void TcpServer::newConnection(int sockfd, const InetAddress& peer) {
-    (void) peer;  // 可扩展：记录或回调上层
+    (void) peer; 
+    loop_->assertInLoopThread();
+    // 设置 conn 的 ioloop
     auto conn = std::make_shared<TcpConnection>(loop_, sockfd);
     if (connectionCallback_) {
         conn->setConnectionCallback(connectionCallback_);
@@ -48,7 +71,9 @@ void TcpServer::newConnection(int sockfd, const InetAddress& peer) {
         this->removeConnection(c);
     });
     connections_.emplace(sockfd, conn);
-    conn->connectEstablished();  // 让channel绑定自己,并通知链接建立
+    loop_->runInLoop([conn](){
+        conn->connectEstablished();  // 让channel绑定自己,并通知链接建立
+    });
     LOG_INFO("new connection fd={} established (total={})", sockfd, connections_.size());
 }
 

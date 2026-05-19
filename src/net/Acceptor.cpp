@@ -5,16 +5,21 @@
 
 #include <cerrno>
 #include <cstring>
+#include <fcntl.h>
 
 #include "Channel.hpp"
 #include "InetAddress.hpp"
 #include "Log.hpp"
 #include "Socket.hpp"
+#include "EventLoop.hpp"
 
 namespace net {
 
 Acceptor::Acceptor(EventLoop* loop, const InetAddress& listenAddr)
-    : loop_(loop), acceptChannel_(loop, acceptSocket_.fd()) {
+    : loop_(loop), acceptChannel_(loop, acceptSocket_.fd())
+    , listening_{false}
+    , idleFd_(::open("/dev/null", O_RDONLY | O_CLOEXEC)) 
+{
     acceptSocket_.setNonblock();
     acceptSocket_.setReuseAddr();
     acceptSocket_.setReusePort();
@@ -25,9 +30,12 @@ Acceptor::Acceptor(EventLoop* loop, const InetAddress& listenAddr)
 Acceptor::~Acceptor() {
     acceptChannel_.disableAll();
     acceptChannel_.remove();
+    ::close(idleFd_);
 };
 
 void Acceptor::listen(int backlog) {
+    loop_->assertInLoopThread();
+    listening_ = true;
     LOG_INFO("Acceptor starting to listen (backlog={})", backlog);
     acceptSocket_.listen(backlog);
     acceptChannel_.enableReading();
@@ -35,6 +43,7 @@ void Acceptor::listen(int backlog) {
 }
 
 void Acceptor::handleRead() {
+    loop_->assertInLoopThread();
     for (;;) {
         InetAddress peeraddr;
         const int   connectFd = acceptSocket_.accept(peeraddr);
@@ -57,6 +66,13 @@ void Acceptor::handleRead() {
         if (errno == ECONNABORTED) {
             // 三次握手已完成但连接在 accept 前被对端复位，跳过继续
             LOG_WARN("accept ECONNABORTED, continue");
+            continue;
+        }
+        if (errno == EMFILE){
+            ::close(idleFd_);
+            idleFd_ = ::accept(acceptSocket_.fd(), NULL, NULL);
+            ::close(idleFd_);
+            idleFd_ = ::open("/dev/null", O_RDONLY | O_CLOEXEC);
             continue;
         }
         LOG_ERROR("accept failed errno={} msg={}", errno, strerror(errno));

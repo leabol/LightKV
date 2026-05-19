@@ -1,5 +1,6 @@
 #include "TcpConnection.hpp"
 
+#include <cassert>
 #include <sys/socket.h>
 #include <unistd.h>
 
@@ -36,6 +37,8 @@ int TcpConnection::fd() const {
 }
 
 void TcpConnection::connectEstablished() {
+    loop_->assertInLoopThread();
+    assert(state_ == kConnecting);
     setState(kConnected);
     LOG_DEBUG("TcpConnection fd={} established", fd());
     auto self = shared_from_this();

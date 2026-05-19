@@ -1,7 +1,10 @@
 #pragma once
 
+#include <condition_variable>
 #include <memory>
+#include <mutex>
 #include <unordered_map>
+#include <thread>
 
 #include "Acceptor.hpp"
 #include "TcpConnection.hpp"
@@ -37,14 +40,19 @@ class TcpServer {
 
     // 开始监听
     void start();
-
+    void threadFunc();
   private:
     void newConnection(int sockfd, const InetAddress& peer);  // Acceptor 回调
     void removeConnection(const TcpConnectionPtr& conn);      // 连接关闭回调
 
     EventLoop* loop_{nullptr};
     Acceptor   acceptor_;  // 监听 + 接收
+    EventLoop* eventloop_{nullptr};
+    std::thread thread_;
 
+    std::mutex cond_mutex_;
+    std::condition_variable cond_;
+    
     std::unordered_map<int, TcpConnectionPtr> connections_;  // fd -> 连接
 
     ConnectionCallback    connectionCallback_;  // 用户设置（可能为空）

@@ -2,6 +2,7 @@
 #include "InetAddress.hpp"
 #include "server/kv_server.hpp"
 #include "Log.hpp"
+#include <spdlog/common.h>
 
 int main(int argc, char** argv) {
     Server::setLevel(spdlog::level::off);

@@ -58,6 +58,7 @@ void Socket::bindAddr(const InetAddress& addr) const {
     }
 }
 
+// backlog表示完成三次握手后的请求队列的最大长度
 void Socket::listen(int backlog) const {
     if (::listen(socketfd_, backlog) == -1) {
         throw std::runtime_error("listen failed: " + std::string(strerror(errno)));

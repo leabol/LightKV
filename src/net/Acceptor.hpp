@@ -29,7 +29,7 @@ class Acceptor {
     }
 
     void listen(int backlog = SOMAXCONN);
-
+    bool listening() const { return listening_;}
   private:
     void handleRead();
 
@@ -37,5 +37,7 @@ class Acceptor {
     Socket                acceptSocket_;        // 监听socket
     Channel               acceptChannel_;       // 用来接收socket, 通过使用handleRead回调
     NewConnectionCallback newConnectionCb_;  // 具体处理连接的socket
+    bool listening_;
+    int idleFd_;
 };
 }  // namespace Server
