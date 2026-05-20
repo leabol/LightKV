@@ -1,18 +1,17 @@
 #pragma once
 
-#include <condition_variable>
 #include <memory>
-#include <mutex>
 #include <unordered_map>
-#include <thread>
 
 #include "Acceptor.hpp"
+#include "EventLoopThread.hpp"
 #include "TcpConnection.hpp"
 
 namespace net {
 
 class EventLoop;
 class InetAddress;
+class EventLoopThread;
 
 // 单线程 TcpServer：接受新连接并创建 TcpConnection，转发回调。
 class TcpServer {
@@ -48,11 +47,9 @@ class TcpServer {
     EventLoop* loop_{nullptr};
     Acceptor   acceptor_;  // 监听 + 接收
     EventLoop* eventloop_{nullptr};
-    std::thread thread_;
-
-    std::mutex cond_mutex_;
-    std::condition_variable cond_;
     
+    std::unique_ptr<EventLoopThread> thread_;
+
     std::unordered_map<int, TcpConnectionPtr> connections_;  // fd -> 连接
 
     ConnectionCallback    connectionCallback_;  // 用户设置（可能为空）

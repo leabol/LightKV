@@ -2,10 +2,11 @@
 
 #include "Acceptor.hpp"
 #include "EventLoop.hpp"
+#include "EventLoopThread.hpp"
 #include "InetAddress.hpp"
 #include "Log.hpp"
 #include "TcpConnection.hpp"
-#include <mutex>
+#include <memory>
 
 namespace net {
 
@@ -26,29 +27,13 @@ TcpServer::~TcpServer() {
 }
 
 void TcpServer::start() {
-    thread_ = std::thread([this] { this->threadFunc(); });
-    {
-        std::unique_lock<std::mutex> lock(cond_mutex_);
-        cond_.wait(lock,[this]{
-            return eventloop_ != nullptr;
-        });
-    }
+    thread_ = std::make_unique<EventLoopThread>();
+    thread_->startLoop();
     // Start accepting on the provided loop (no extra thread by default)
     loop_->runInLoop([this]() { acceptor_.listen(); });
     LOG_INFO("TcpServer listening started");
 }
 
-void TcpServer::threadFunc(){
-    EventLoop loop;
-
-    {
-        std::lock_guard<std::mutex> lock(cond_mutex_);
-        eventloop_ = &loop;
-    }
-    cond_.notify_all();
-
-    loop.loop(10000);
-}
 
 void TcpServer::newConnection(int sockfd, const InetAddress& peer) {
     (void) peer; 

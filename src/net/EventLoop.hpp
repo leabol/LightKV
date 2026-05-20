@@ -21,7 +21,7 @@ class EventLoop {
     ~EventLoop();
 
     int createEventFd();  //  创建一个wakeup事件返回对应的fd
-    void loop(int timeout);
+    void loop();
 
     void quit();
 

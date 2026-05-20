@@ -17,6 +17,6 @@ int main(int argc, char** argv) {
 	server::KvServer srv(&loop, listenAddr);
 	srv.start();
 
-	loop.loop(1000);
+	loop.loop();
 	return 0;
 }

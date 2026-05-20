@@ -22,13 +22,14 @@ add_library(net STATIC
     src/protocol/parser.cpp
     src/protocol/codec.cpp
     src/server/kv_server.cpp
+    src/net/EventLoopThread.cpp
 )
 
 target_include_directories(net
     PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}/src/net
         ${CMAKE_CURRENT_SOURCE_DIR}/src/protocol
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/server
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/server
         ${CMAKE_CURRENT_SOURCE_DIR}/src/util
 )
 

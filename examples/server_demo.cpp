@@ -22,6 +22,6 @@ int main() {
     });
 
     server.start();
-    loop.loop(1000);
+    loop.loop();
     return 0;
 }

@@ -36,7 +36,7 @@ EventLoop::~EventLoop(){
     ::close(wakeupFd_);
 }
 
-void EventLoop::loop(int timeout = kPollTimeMs) {
+void EventLoop::loop() {
     assert(!looping_);
     assertInLoopThread();
     looping_ = true;
@@ -45,7 +45,7 @@ void EventLoop::loop(int timeout = kPollTimeMs) {
 
     while (!quit_) {
         activeChannels_.clear();
-        activeChannels_ = poller_->poll(timeout);
+        activeChannels_ = poller_->poll(kPollTimeMs);
         eventHandling_ = true;
         for (auto* channel : activeChannels_) {
             channel->handleEvent();
