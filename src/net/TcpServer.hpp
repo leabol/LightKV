@@ -1,10 +1,12 @@
 #pragma once
 
+#include <functional>
 #include <memory>
 #include <unordered_map>
 
 #include "Acceptor.hpp"
 #include "EventLoopThread.hpp"
+#include "EventLoopThreadPool.hpp"
 #include "TcpConnection.hpp"
 
 namespace net {
@@ -20,6 +22,7 @@ class TcpServer {
     using ConnectionCallback    = TcpConnection::ConnectionCallback;     // 建立/关闭
     using MessageCallback       = TcpConnection::MessageCallback;        // 收到数据
     using WriteCompleteCallback = TcpConnection::WriteCompleteCallback;  // 发送完成
+    using ThreadInitCallback    = std::function<void(EventLoop*)>;
 
     TcpServer(EventLoop* loop, const InetAddress& listenAddr);
     ~TcpServer();
@@ -46,6 +49,7 @@ class TcpServer {
 
     EventLoop* loop_{nullptr};
     Acceptor   acceptor_;  // 监听 + 接收
+    std::shared_ptr<EventLoopThreadPool> threadPools_;
     EventLoop* eventloop_{nullptr};
     
     std::unique_ptr<EventLoopThread> thread_;
@@ -55,5 +59,6 @@ class TcpServer {
     ConnectionCallback    connectionCallback_;  // 用户设置（可能为空）
     MessageCallback       messageCallback_;
     WriteCompleteCallback writeCompleteCallback_;
+    ThreadInitCallback    ThreadInitCallback_;
 };
 }  // namespace Server

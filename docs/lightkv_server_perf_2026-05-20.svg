@@ -1,0 +1,1834 @@
+<?xml version="1.0" standalone="no"?>
+<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">
+<svg version="1.1" width="1200" height="902" onload="init(evt)" viewBox="0 0 1200 902" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+<!-- Flame graph stack visualization. See https://github.com/brendangregg/FlameGraph for latest version, and http://www.brendangregg.com/flamegraphs.html for examples. -->
+<!-- NOTES:  -->
+<defs>
+	<linearGradient id="background" y1="0" y2="1" x1="0" x2="0" >
+		<stop stop-color="#eeeeee" offset="5%" />
+		<stop stop-color="#eeeeb0" offset="95%" />
+	</linearGradient>
+</defs>
+<style type="text/css">
+	text { font-family:Verdana; font-size:12px; fill:rgb(0,0,0); }
+	#search, #ignorecase { opacity:0.1; cursor:pointer; }
+	#search:hover, #search.show, #ignorecase:hover, #ignorecase.show { opacity:1; }
+	#subtitle { text-anchor:middle; font-color:rgb(160,160,160); }
+	#title { text-anchor:middle; font-size:17px}
+	#unzoom { cursor:pointer; }
+	#frames > *:hover { stroke:black; stroke-width:0.5; cursor:pointer; }
+	.hide { display:none; }
+	.parent { opacity:0.5; }
+</style>
+<script type="text/ecmascript">
+<![CDATA[
+	"use strict";
+	var details, searchbtn, unzoombtn, matchedtxt, svg, searching, currentSearchTerm, ignorecase, ignorecaseBtn;
+	function init(evt) {
+		details = document.getElementById("details").firstChild;
+		searchbtn = document.getElementById("search");
+		ignorecaseBtn = document.getElementById("ignorecase");
+		unzoombtn = document.getElementById("unzoom");
+		matchedtxt = document.getElementById("matched");
+		svg = document.getElementsByTagName("svg")[0];
+		searching = 0;
+		currentSearchTerm = null;
+
+		// use GET parameters to restore a flamegraphs state.
+		var params = get_params();
+		if (params.x && params.y)
+			zoom(find_group(document.querySelector('[x="' + params.x + '"][y="' + params.y + '"]')));
+                if (params.s) search(params.s);
+	}
+
+	// event listeners
+	window.addEventListener("click", function(e) {
+		var target = find_group(e.target);
+		if (target) {
+			if (target.nodeName == "a") {
+				if (e.ctrlKey === false) return;
+				e.preventDefault();
+			}
+			if (target.classList.contains("parent")) unzoom(true);
+			zoom(target);
+			if (!document.querySelector('.parent')) {
+				// we have basically done a clearzoom so clear the url
+				var params = get_params();
+				if (params.x) delete params.x;
+				if (params.y) delete params.y;
+				history.replaceState(null, null, parse_params(params));
+				unzoombtn.classList.add("hide");
+				return;
+			}
+
+			// set parameters for zoom state
+			var el = target.querySelector("rect");
+			if (el && el.attributes && el.attributes.y && el.attributes._orig_x) {
+				var params = get_params()
+				params.x = el.attributes._orig_x.value;
+				params.y = el.attributes.y.value;
+				history.replaceState(null, null, parse_params(params));
+			}
+		}
+		else if (e.target.id == "unzoom") clearzoom();
+		else if (e.target.id == "search") search_prompt();
+		else if (e.target.id == "ignorecase") toggle_ignorecase();
+	}, false)
+
+	// mouse-over for info
+	// show
+	window.addEventListener("mouseover", function(e) {
+		var target = find_group(e.target);
+		if (target) details.nodeValue = "Function: " + g_to_text(target);
+	}, false)
+
+	// clear
+	window.addEventListener("mouseout", function(e) {
+		var target = find_group(e.target);
+		if (target) details.nodeValue = ' ';
+	}, false)
+
+	// ctrl-F for search
+	// ctrl-I to toggle case-sensitive search
+	window.addEventListener("keydown",function (e) {
+		if (e.keyCode === 114 || (e.ctrlKey && e.keyCode === 70)) {
+			e.preventDefault();
+			search_prompt();
+		}
+		else if (e.ctrlKey && e.keyCode === 73) {
+			e.preventDefault();
+			toggle_ignorecase();
+		}
+	}, false)
+
+	// functions
+	function get_params() {
+		var params = {};
+		var paramsarr = window.location.search.substr(1).split('&');
+		for (var i = 0; i < paramsarr.length; ++i) {
+			var tmp = paramsarr[i].split("=");
+			if (!tmp[0] || !tmp[1]) continue;
+			params[tmp[0]]  = decodeURIComponent(tmp[1]);
+		}
+		return params;
+	}
+	function parse_params(params) {
+		var uri = "?";
+		for (var key in params) {
+			uri += key + '=' + encodeURIComponent(params[key]) + '&';
+		}
+		if (uri.slice(-1) == "&")
+			uri = uri.substring(0, uri.length - 1);
+		if (uri == '?')
+			uri = window.location.href.split('?')[0];
+		return uri;
+	}
+	function find_child(node, selector) {
+		var children = node.querySelectorAll(selector);
+		if (children.length) return children[0];
+	}
+	function find_group(node) {
+		var parent = node.parentElement;
+		if (!parent) return;
+		if (parent.id == "frames") return node;
+		return find_group(parent);
+	}
+	function orig_save(e, attr, val) {
+		if (e.attributes["_orig_" + attr] != undefined) return;
+		if (e.attributes[attr] == undefined) return;
+		if (val == undefined) val = e.attributes[attr].value;
+		e.setAttribute("_orig_" + attr, val);
+	}
+	function orig_load(e, attr) {
+		if (e.attributes["_orig_"+attr] == undefined) return;
+		e.attributes[attr].value = e.attributes["_orig_" + attr].value;
+		e.removeAttribute("_orig_"+attr);
+	}
+	function g_to_text(e) {
+		var text = find_child(e, "title").firstChild.nodeValue;
+		return (text)
+	}
+	function g_to_func(e) {
+		var func = g_to_text(e);
+		// if there's any manipulation we want to do to the function
+		// name before it's searched, do it here before returning.
+		return (func);
+	}
+	function update_text(e) {
+		var r = find_child(e, "rect");
+		var t = find_child(e, "text");
+		var w = parseFloat(r.attributes.width.value) -3;
+		var txt = find_child(e, "title").textContent.replace(/\([^(]*\)$/,"");
+		t.attributes.x.value = parseFloat(r.attributes.x.value) + 3;
+
+		// Smaller than this size won't fit anything
+		if (w < 2 * 12 * 0.59) {
+			t.textContent = "";
+			return;
+		}
+
+		t.textContent = txt;
+		var sl = t.getSubStringLength(0, txt.length);
+		// check if only whitespace or if we can fit the entire string into width w
+		if (/^ *$/.test(txt) || sl < w)
+			return;
+
+		// this isn't perfect, but gives a good starting point
+		// and avoids calling getSubStringLength too often
+		var start = Math.floor((w/sl) * txt.length);
+		for (var x = start; x > 0; x = x-2) {
+			if (t.getSubStringLength(0, x + 2) <= w) {
+				t.textContent = txt.substring(0, x) + "..";
+				return;
+			}
+		}
+		t.textContent = "";
+	}
+
+	// zoom
+	function zoom_reset(e) {
+		if (e.attributes != undefined) {
+			orig_load(e, "x");
+			orig_load(e, "width");
+		}
+		if (e.childNodes == undefined) return;
+		for (var i = 0, c = e.childNodes; i < c.length; i++) {
+			zoom_reset(c[i]);
+		}
+	}
+	function zoom_child(e, x, ratio) {
+		if (e.attributes != undefined) {
+			if (e.attributes.x != undefined) {
+				orig_save(e, "x");
+				e.attributes.x.value = (parseFloat(e.attributes.x.value) - x - 10) * ratio + 10;
+				if (e.tagName == "text")
+					e.attributes.x.value = find_child(e.parentNode, "rect[x]").attributes.x.value + 3;
+			}
+			if (e.attributes.width != undefined) {
+				orig_save(e, "width");
+				e.attributes.width.value = parseFloat(e.attributes.width.value) * ratio;
+			}
+		}
+
+		if (e.childNodes == undefined) return;
+		for (var i = 0, c = e.childNodes; i < c.length; i++) {
+			zoom_child(c[i], x - 10, ratio);
+		}
+	}
+	function zoom_parent(e) {
+		if (e.attributes) {
+			if (e.attributes.x != undefined) {
+				orig_save(e, "x");
+				e.attributes.x.value = 10;
+			}
+			if (e.attributes.width != undefined) {
+				orig_save(e, "width");
+				e.attributes.width.value = parseInt(svg.width.baseVal.value) - (10 * 2);
+			}
+		}
+		if (e.childNodes == undefined) return;
+		for (var i = 0, c = e.childNodes; i < c.length; i++) {
+			zoom_parent(c[i]);
+		}
+	}
+	function zoom(node) {
+		var attr = find_child(node, "rect").attributes;
+		var width = parseFloat(attr.width.value);
+		var xmin = parseFloat(attr.x.value);
+		var xmax = parseFloat(xmin + width);
+		var ymin = parseFloat(attr.y.value);
+		var ratio = (svg.width.baseVal.value - 2 * 10) / width;
+
+		// XXX: Workaround for JavaScript float issues (fix me)
+		var fudge = 0.0001;
+
+		unzoombtn.classList.remove("hide");
+
+		var el = document.getElementById("frames").children;
+		for (var i = 0; i < el.length; i++) {
+			var e = el[i];
+			var a = find_child(e, "rect").attributes;
+			var ex = parseFloat(a.x.value);
+			var ew = parseFloat(a.width.value);
+			var upstack;
+			// Is it an ancestor
+			if (0 == 0) {
+				upstack = parseFloat(a.y.value) > ymin;
+			} else {
+				upstack = parseFloat(a.y.value) < ymin;
+			}
+			if (upstack) {
+				// Direct ancestor
+				if (ex <= xmin && (ex+ew+fudge) >= xmax) {
+					e.classList.add("parent");
+					zoom_parent(e);
+					update_text(e);
+				}
+				// not in current path
+				else
+					e.classList.add("hide");
+			}
+			// Children maybe
+			else {
+				// no common path
+				if (ex < xmin || ex + fudge >= xmax) {
+					e.classList.add("hide");
+				}
+				else {
+					zoom_child(e, xmin, ratio);
+					update_text(e);
+				}
+			}
+		}
+		search();
+	}
+	function unzoom(dont_update_text) {
+		unzoombtn.classList.add("hide");
+		var el = document.getElementById("frames").children;
+		for(var i = 0; i < el.length; i++) {
+			el[i].classList.remove("parent");
+			el[i].classList.remove("hide");
+			zoom_reset(el[i]);
+			if(!dont_update_text) update_text(el[i]);
+		}
+		search();
+	}
+	function clearzoom() {
+		unzoom();
+
+		// remove zoom state
+		var params = get_params();
+		if (params.x) delete params.x;
+		if (params.y) delete params.y;
+		history.replaceState(null, null, parse_params(params));
+	}
+
+	// search
+	function toggle_ignorecase() {
+		ignorecase = !ignorecase;
+		if (ignorecase) {
+			ignorecaseBtn.classList.add("show");
+		} else {
+			ignorecaseBtn.classList.remove("show");
+		}
+		reset_search();
+		search();
+	}
+	function reset_search() {
+		var el = document.querySelectorAll("#frames rect");
+		for (var i = 0; i < el.length; i++) {
+			orig_load(el[i], "fill")
+		}
+		var params = get_params();
+		delete params.s;
+		history.replaceState(null, null, parse_params(params));
+	}
+	function search_prompt() {
+		if (!searching) {
+			var term = prompt("Enter a search term (regexp " +
+			    "allowed, eg: ^ext4_)"
+			    + (ignorecase ? ", ignoring case" : "")
+			    + "\nPress Ctrl-i to toggle case sensitivity", "");
+			if (term != null) search(term);
+		} else {
+			reset_search();
+			searching = 0;
+			currentSearchTerm = null;
+			searchbtn.classList.remove("show");
+			searchbtn.firstChild.nodeValue = "Search"
+			matchedtxt.classList.add("hide");
+			matchedtxt.firstChild.nodeValue = ""
+		}
+	}
+	function search(term) {
+		if (term) currentSearchTerm = term;
+		if (currentSearchTerm === null) return;
+
+		var re = new RegExp(currentSearchTerm, ignorecase ? 'i' : '');
+		var el = document.getElementById("frames").children;
+		var matches = new Object();
+		var maxwidth = 0;
+		for (var i = 0; i < el.length; i++) {
+			var e = el[i];
+			var func = g_to_func(e);
+			var rect = find_child(e, "rect");
+			if (func == null || rect == null)
+				continue;
+
+			// Save max width. Only works as we have a root frame
+			var w = parseFloat(rect.attributes.width.value);
+			if (w > maxwidth)
+				maxwidth = w;
+
+			if (func.match(re)) {
+				// highlight
+				var x = parseFloat(rect.attributes.x.value);
+				orig_save(rect, "fill");
+				rect.attributes.fill.value = "rgb(230,0,230)";
+
+				// remember matches
+				if (matches[x] == undefined) {
+					matches[x] = w;
+				} else {
+					if (w > matches[x]) {
+						// overwrite with parent
+						matches[x] = w;
+					}
+				}
+				searching = 1;
+			}
+		}
+		if (!searching)
+			return;
+		var params = get_params();
+		params.s = currentSearchTerm;
+		history.replaceState(null, null, parse_params(params));
+
+		searchbtn.classList.add("show");
+		searchbtn.firstChild.nodeValue = "Reset Search";
+
+		// calculate percent matched, excluding vertical overlap
+		var count = 0;
+		var lastx = -1;
+		var lastw = 0;
+		var keys = Array();
+		for (k in matches) {
+			if (matches.hasOwnProperty(k))
+				keys.push(k);
+		}
+		// sort the matched frames by their x location
+		// ascending, then width descending
+		keys.sort(function(a, b){
+			return a - b;
+		});
+		// Step through frames saving only the biggest bottom-up frames
+		// thanks to the sort order. This relies on the tree property
+		// where children are always smaller than their parents.
+		var fudge = 0.0001;	// JavaScript floating point
+		for (var k in keys) {
+			var x = parseFloat(keys[k]);
+			var w = matches[keys[k]];
+			if (x >= lastx + lastw - fudge) {
+				count += w;
+				lastx = x;
+				lastw = w;
+			}
+		}
+		// display matched percent
+		matchedtxt.classList.remove("hide");
+		var pct = 100 * count / maxwidth;
+		if (pct != 100) pct = pct.toFixed(1)
+		matchedtxt.firstChild.nodeValue = "Matched: " + pct + "%";
+	}
+]]>
+</script>
+<rect x="0.0" y="0" width="1200.0" height="902.0" fill="url(#background)"  />
+<text id="title" x="600.00" y="24" >Flame Graph</text>
+<text id="details" x="10.00" y="885" > </text>
+<text id="unzoom" x="10.00" y="24" class="hide">Reset Zoom</text>
+<text id="search" x="1090.00" y="24" >Search</text>
+<text id="ignorecase" x="1174.00" y="24" >ic</text>
+<text id="matched" x="1090.00" y="885" > </text>
+<g id="frames">
+<g >
+<title>protocol::parserRequest (252,339,764 samples, 2.44%)</title><rect x="976.7" y="565" width="28.8" height="15.0" fill="rgb(235,141,33)" rx="2" ry="2" />
+<text  x="979.71" y="575.5" >pr..</text>
+</g>
+<g >
+<title> (44,569,388 samples, 0.43%)</title><rect x="942.8" y="517" width="5.0" height="15.0" fill="rgb(232,128,30)" rx="2" ry="2" />
+<text  x="945.76" y="527.5" ></text>
+</g>
+<g >
+<title>__check_object_size (125,062,863 samples, 1.21%)</title><rect x="356.3" y="453" width="14.3" height="15.0" fill="rgb(226,98,23)" rx="2" ry="2" />
+<text  x="359.29" y="463.5" ></text>
+</g>
+<g >
+<title>do_syscall_64 (1,164,757,496 samples, 11.26%)</title><rect x="117.5" y="645" width="132.9" height="15.0" fill="rgb(209,20,4)" rx="2" ry="2" />
+<text  x="120.54" y="655.5" >do_syscall_64</text>
+</g>
+<g >
+<title>__rcu_read_lock (42,287,700 samples, 0.41%)</title><rect x="226.0" y="565" width="4.9" height="15.0" fill="rgb(220,69,16)" rx="2" ry="2" />
+<text  x="229.03" y="575.5" ></text>
+</g>
+<g >
+<title>task_tick_fair (43,783,999 samples, 0.42%)</title><rect x="751.9" y="53" width="5.0" height="15.0" fill="rgb(217,57,13)" rx="2" ry="2" />
+<text  x="754.93" y="63.5" ></text>
+</g>
+<g >
+<title>nf_hook_slow (194,869,518 samples, 1.88%)</title><rect x="710.0" y="213" width="22.3" height="15.0" fill="rgb(243,175,42)" rx="2" ry="2" />
+<text  x="713.03" y="223.5" >n..</text>
+</g>
+<g >
+<title>[libc.so.6] (10,090,807,107 samples, 97.53%)</title><rect x="10.0" y="821" width="1150.8" height="15.0" fill="rgb(223,84,20)" rx="2" ry="2" />
+<text  x="13.00" y="831.5" >[libc.so.6]</text>
+</g>
+<g >
+<title>void std::__invoke_impl&lt;void, net::TcpConnection::TcpConnection (8,976,850,600 samples, 86.76%)</title><rect x="88.1" y="709" width="1023.8" height="15.0" fill="rgb(218,60,14)" rx="2" ry="2" />
+<text  x="91.13" y="719.5" >void std::__invoke_impl&lt;void, net::TcpConnection::TcpConnection</text>
+</g>
+<g >
+<title>sk_page_frag_refill (41,838,481 samples, 0.40%)</title><rect x="823.5" y="453" width="4.8" height="15.0" fill="rgb(211,30,7)" rx="2" ry="2" />
+<text  x="826.54" y="463.5" ></text>
+</g>
+<g >
+<title>fput (43,430,533 samples, 0.42%)</title><rect x="332.0" y="485" width="4.9" height="15.0" fill="rgb(225,96,23)" rx="2" ry="2" />
+<text  x="334.99" y="495.5" ></text>
+</g>
+<g >
+<title>std::enable_if&lt;is_invocable_r_v&lt;protocol::Response, server::KvServer::KvServer (330,626,305 samples, 3.20%)</title><rect x="1010.3" y="517" width="37.7" height="15.0" fill="rgb(211,30,7)" rx="2" ry="2" />
+<text  x="1013.26" y="527.5" >std..</text>
+</g>
+<g >
+<title>__dev_queue_xmit (2,576,675,683 samples, 24.90%)</title><rect x="492.4" y="357" width="293.9" height="15.0" fill="rgb(244,182,43)" rx="2" ry="2" />
+<text  x="495.39" y="367.5" >__dev_queue_xmit</text>
+</g>
+<g >
+<title>std::__detail::_Hash_code_base&lt;std::__cxx11::basic_string&lt;char, std::char_traits&lt;char&gt;, std::allocator&lt;char&gt; &gt;, std::pair&lt;std::__cxx11::basic_string&lt;char, std::char_traits&lt;char&gt;, std::allocator&lt;char&gt; &gt; const, std::__cxx11::basic_string&lt;char, std::char_traits&lt;char&gt;, std::allocator&lt;char&gt; &gt; &gt;, std::__detail::_Select1st, std::hash&lt;std::__cxx11::basic_string&lt;char, std::char_traits&lt;char&gt;, std::allocator&lt;char&gt; &gt; &gt;, std::__detail::_Mod_range_hashing, std::__detail::_Default_ranged_hash, true&gt;::_M_bucket_index (42,382,894 samples, 0.41%)</title><rect x="1020.1" y="373" width="4.8" height="15.0" fill="rgb(228,106,25)" rx="2" ry="2" />
+<text  x="1023.08" y="383.5" ></text>
+</g>
+<g >
+<title>hash_conntrack_raw (5,050,505 samples, 0.05%)</title><rect x="452.6" y="325" width="0.6" height="15.0" fill="rgb(220,70,16)" rx="2" ry="2" />
+<text  x="455.65" y="335.5" ></text>
+</g>
+<g >
+<title>spdlog::details::to_string_view (5,050,505 samples, 0.05%)</title><rect x="1106.5" y="645" width="0.6" height="15.0" fill="rgb(240,164,39)" rx="2" ry="2" />
+<text  x="1109.52" y="655.5" ></text>
+</g>
+<g >
+<title>__sys_recvfrom (951,497,880 samples, 9.20%)</title><rect x="122.3" y="613" width="108.6" height="15.0" fill="rgb(247,197,47)" rx="2" ry="2" />
+<text  x="125.33" y="623.5" >__sys_recvfrom</text>
+</g>
+<g >
+<title>memset_orig (40,399,811 samples, 0.39%)</title><rect x="852.4" y="389" width="4.6" height="15.0" fill="rgb(247,194,46)" rx="2" ry="2" />
+<text  x="855.39" y="399.5" ></text>
+</g>
+<g >
+<title>process_backlog (2,115,094,908 samples, 20.44%)</title><rect x="534.9" y="261" width="241.2" height="15.0" fill="rgb(224,90,21)" rx="2" ry="2" />
+<text  x="537.92" y="271.5" >process_backlog</text>
+</g>
+<g >
+<title>std::__cxx11::basic_string&lt;char, std::char_traits&lt;char&gt;, std::allocator&lt;char&gt; &gt;::operator= (42,211,445 samples, 0.41%)</title><rect x="1160.8" y="789" width="4.9" height="15.0" fill="rgb(226,100,24)" rx="2" ry="2" />
+<text  x="1163.85" y="799.5" ></text>
+</g>
+<g >
+<title>std::_Sp_counted_base&lt; (42,494,638 samples, 0.41%)</title><rect x="911.3" y="485" width="4.8" height="15.0" fill="rgb(211,31,7)" rx="2" ry="2" />
+<text  x="914.26" y="495.5" ></text>
+</g>
+<g >
+<title>tcp_recvmsg (783,181,584 samples, 7.57%)</title><rect x="136.7" y="565" width="89.3" height="15.0" fill="rgb(234,135,32)" rx="2" ry="2" />
+<text  x="139.71" y="575.5" >tcp_recvmsg</text>
+</g>
+<g >
+<title>__tcp_cleanup_rbuf (42,782,197 samples, 0.41%)</title><rect x="177.8" y="533" width="4.9" height="15.0" fill="rgb(206,4,1)" rx="2" ry="2" />
+<text  x="180.80" y="543.5" ></text>
+</g>
+<g >
+<title>std::_Hashtable&lt;std::__cxx11::basic_string&lt;char, std::char_traits&lt;char&gt;, std::allocator&lt;char&gt; &gt;, std::pair&lt;std::__cxx11::basic_string&lt;char, std::char_traits&lt;char&gt;, std::allocator&lt;char&gt; &gt; const, std::__cxx11::basic_string&lt;char, std::char_traits&lt;char&gt;, std::allocator&lt;char&gt; &gt; &gt;, std::allocator&lt;std::pair&lt;std::__cxx11::basic_string&lt;char, std::char_traits&lt;char&gt;, std::allocator&lt;char&gt; &gt; const, std::__cxx11::basic_string&lt;char, std::char_traits&lt;char&gt;, std::allocator&lt;char&gt; &gt; &gt; &gt;, std::__detail::_Select1st, std::equal_to&lt;std::__cxx11::basic_string&lt;char, std::char_traits&lt;char&gt;, std::allocator&lt;char&gt; &gt; &gt;, std::hash&lt;std::__cxx11::basic_string&lt;char, std::char_traits&lt;char&gt;, std::allocator&lt;char&gt; &gt; &gt;, std::__detail::_Mod_range_hashing, std::__detail::_Default_ranged_hash, std::__detail::_Prime_rehash_policy, std::__detail::_Hashtable_traits&lt;true, false, true&gt; &gt;::_M_find_before_node (200,766,574 samples, 1.94%)</title><rect x="1020.1" y="405" width="22.9" height="15.0" fill="rgb(214,44,10)" rx="2" ry="2" />
+<text  x="1023.08" y="415.5" >s..</text>
+</g>
+<g >
+<title>__skb_datagram_iter (296,152,327 samples, 2.86%)</title><rect x="182.7" y="517" width="33.8" height="15.0" fill="rgb(244,179,42)" rx="2" ry="2" />
+<text  x="185.68" y="527.5" >__..</text>
+</g>
+<g >
+<title>clear_bhb_loop (125,904,576 samples, 1.22%)</title><rect x="97.8" y="661" width="14.4" height="15.0" fill="rgb(240,162,38)" rx="2" ry="2" />
+<text  x="100.79" y="671.5" ></text>
+</g>
+<g >
+<title>std::_Tuple_impl&lt;0ul, net::Socket*, std::default_delete&lt;net::Socket&gt; &gt;::_M_head (5,050,505 samples, 0.05%)</title><rect x="947.3" y="437" width="0.5" height="15.0" fill="rgb(218,63,15)" rx="2" ry="2" />
+<text  x="950.27" y="447.5" ></text>
+</g>
+<g >
+<title>do_epoll_wait (382,736,426 samples, 3.70%)</title><rect x="15.6" y="709" width="43.6" height="15.0" fill="rgb(211,31,7)" rx="2" ry="2" />
+<text  x="18.56" y="719.5" >do_e..</text>
+</g>
+<g >
+<title>try_to_wake_up (212,873,667 samples, 2.06%)</title><rect x="620.3" y="85" width="24.3" height="15.0" fill="rgb(220,70,16)" rx="2" ry="2" />
+<text  x="623.32" y="95.5" >t..</text>
+</g>
+<g >
+<title>Server::initLogger (138,274,083 samples, 1.34%)</title><rect x="890.5" y="533" width="15.8" height="15.0" fill="rgb(243,178,42)" rx="2" ry="2" />
+<text  x="893.54" y="543.5" ></text>
+</g>
+<g >
+<title>__napi_poll (2,115,094,908 samples, 20.44%)</title><rect x="534.9" y="277" width="241.2" height="15.0" fill="rgb(247,195,46)" rx="2" ry="2" />
+<text  x="537.92" y="287.5" >__napi_poll</text>
+</g>
+<g >
+<title>__list_del_entry_valid_or_report (42,107,725 samples, 0.41%)</title><rect x="15.6" y="693" width="4.8" height="15.0" fill="rgb(243,176,42)" rx="2" ry="2" />
+<text  x="18.56" y="703.5" ></text>
+</g>
+<g >
+<title>sock_put (84,913,226 samples, 0.82%)</title><rect x="586.4" y="165" width="9.6" height="15.0" fill="rgb(230,117,28)" rx="2" ry="2" />
+<text  x="589.37" y="175.5" ></text>
+</g>
+<g >
+<title>tcp_poll (129,118,935 samples, 1.25%)</title><rect x="34.7" y="661" width="14.8" height="15.0" fill="rgb(251,214,51)" rx="2" ry="2" />
+<text  x="37.74" y="671.5" ></text>
+</g>
+<g >
+<title>tcp_stream_memory_free (42,509,674 samples, 0.41%)</title><rect x="44.6" y="645" width="4.9" height="15.0" fill="rgb(252,217,51)" rx="2" ry="2" />
+<text  x="47.62" y="655.5" ></text>
+</g>
+<g >
+<title>_raw_spin_lock_irqsave (128,227,386 samples, 1.24%)</title><rect x="620.3" y="69" width="14.6" height="15.0" fill="rgb(247,195,46)" rx="2" ry="2" />
+<text  x="623.32" y="79.5" ></text>
+</g>
+<g >
+<title>__rcu_read_unlock (41,588,159 samples, 0.40%)</title><rect x="534.9" y="213" width="4.8" height="15.0" fill="rgb(253,224,53)" rx="2" ry="2" />
+<text  x="537.92" y="223.5" ></text>
+</g>
+<g >
+<title>ip_rcv_core (44,902,887 samples, 0.43%)</title><rect x="737.0" y="213" width="5.2" height="15.0" fill="rgb(250,210,50)" rx="2" ry="2" />
+<text  x="740.03" y="223.5" ></text>
+</g>
+<g >
+<title>std::vector&lt;std::function&lt;void  (42,335,646 samples, 0.41%)</title><rect x="1141.4" y="757" width="4.9" height="15.0" fill="rgb(225,95,22)" rx="2" ry="2" />
+<text  x="1144.44" y="767.5" ></text>
+</g>
+<g >
+<title>arch_exit_to_user_mode_prepare.isra.0 (85,018,587 samples, 0.82%)</title><rect x="871.1" y="501" width="9.7" height="15.0" fill="rgb(251,215,51)" rx="2" ry="2" />
+<text  x="874.10" y="511.5" ></text>
+</g>
+<g >
+<title>nft_immediate_eval (42,296,230 samples, 0.41%)</title><rect x="722.6" y="165" width="4.8" height="15.0" fill="rgb(236,145,34)" rx="2" ry="2" />
+<text  x="725.61" y="175.5" ></text>
+</g>
+<g >
+<title>tcp_v4_do_rcv (999,366,618 samples, 9.66%)</title><rect x="596.0" y="165" width="114.0" height="15.0" fill="rgb(210,26,6)" rx="2" ry="2" />
+<text  x="599.05" y="175.5" >tcp_v4_do_rcv</text>
+</g>
+<g >
+<title>__gnu_cxx::__normal_iterator&lt;net::Channel**, std::vector&lt;net::Channel*, std::allocator&lt;net::Channel*&gt; &gt; &gt;::operator++ (42,377,540 samples, 0.41%)</title><rect x="64.2" y="773" width="4.8" height="15.0" fill="rgb(230,116,27)" rx="2" ry="2" />
+<text  x="67.17" y="783.5" ></text>
+</g>
+<g >
+<title>std::__shared_ptr&lt;void,  (85,954,878 samples, 0.83%)</title><rect x="1111.9" y="741" width="9.8" height="15.0" fill="rgb(217,56,13)" rx="2" ry="2" />
+<text  x="1114.93" y="751.5" ></text>
+</g>
+<g >
+<title>simple_copy_to_iter (212,793,909 samples, 2.06%)</title><rect x="192.2" y="501" width="24.3" height="15.0" fill="rgb(228,110,26)" rx="2" ry="2" />
+<text  x="195.18" y="511.5" >s..</text>
+</g>
+<g >
+<title> (94,994,088 samples, 0.92%)</title><rect x="269.9" y="629" width="10.9" height="15.0" fill="rgb(232,128,30)" rx="2" ry="2" />
+<text  x="272.93" y="639.5" ></text>
+</g>
+<g >
+<title>__tcp_push_pending_frames (3,971,842,593 samples, 38.39%)</title><rect x="370.6" y="453" width="452.9" height="15.0" fill="rgb(230,117,28)" rx="2" ry="2" />
+<text  x="373.55" y="463.5" >__tcp_push_pending_frames</text>
+</g>
+<g >
+<title>sk_reset_timer (41,969,744 samples, 0.41%)</title><rect x="818.8" y="405" width="4.7" height="15.0" fill="rgb(247,197,47)" rx="2" ry="2" />
+<text  x="821.75" y="415.5" ></text>
+</g>
+<g >
+<title>std::__shared_count&lt; (5,050,505 samples, 0.05%)</title><rect x="1091.4" y="629" width="0.6" height="15.0" fill="rgb(248,201,48)" rx="2" ry="2" />
+<text  x="1094.41" y="639.5" ></text>
+</g>
+<g >
+<title>lightkv_kv_serv (10,346,427,431 samples, 100.00%)</title><rect x="10.0" y="837" width="1180.0" height="15.0" fill="rgb(222,81,19)" rx="2" ry="2" />
+<text  x="13.00" y="847.5" >lightkv_kv_serv</text>
+</g>
+<g >
+<title>tcp_sendmsg (4,602,192,497 samples, 44.48%)</title><rect x="336.9" y="485" width="524.9" height="15.0" fill="rgb(223,83,19)" rx="2" ry="2" />
+<text  x="339.94" y="495.5" >tcp_sendmsg</text>
+</g>
+<g >
+<title>read_tsc (84,530,500 samples, 0.82%)</title><rect x="690.8" y="101" width="9.7" height="15.0" fill="rgb(206,7,1)" rx="2" ry="2" />
+<text  x="693.85" y="111.5" ></text>
+</g>
+<g >
+<title>std::__shared_ptr&lt;spdlog::logger,  (42,282,824 samples, 0.41%)</title><rect x="962.2" y="533" width="4.9" height="15.0" fill="rgb(244,182,43)" rx="2" ry="2" />
+<text  x="965.24" y="543.5" ></text>
+</g>
+<g >
+<title>ipv4_dst_check (42,182,321 samples, 0.41%)</title><rect x="408.1" y="373" width="4.8" height="15.0" fill="rgb(253,222,53)" rx="2" ry="2" />
+<text  x="411.10" y="383.5" ></text>
+</g>
+<g >
+<title>server::Dispatcher::dispatch (501,106,326 samples, 4.84%)</title><rect x="1005.5" y="565" width="57.1" height="15.0" fill="rgb(243,178,42)" rx="2" ry="2" />
+<text  x="1008.49" y="575.5" >server..</text>
+</g>
+<g >
+<title>std::__cxx11::basic_string&lt;char, std::char_traits&lt;char&gt;, std::allocator&lt;char&gt; &gt;::_M_create (42,296,079 samples, 0.41%)</title><rect x="1185.2" y="805" width="4.8" height="15.0" fill="rgb(248,198,47)" rx="2" ry="2" />
+<text  x="1188.18" y="815.5" ></text>
+</g>
+<g >
+<title>__nf_conntrack_find_get (216,191,584 samples, 2.09%)</title><rect x="428.0" y="325" width="24.6" height="15.0" fill="rgb(243,178,42)" rx="2" ry="2" />
+<text  x="430.99" y="335.5" >_..</text>
+</g>
+<g >
+<title>asm_sysvec_apic_timer_interrupt (43,783,999 samples, 0.42%)</title><rect x="751.9" y="181" width="5.0" height="15.0" fill="rgb(232,127,30)" rx="2" ry="2" />
+<text  x="754.93" y="191.5" ></text>
+</g>
+<g >
+<title>netif_skb_features (5,050,505 samples, 0.05%)</title><rect x="785.7" y="325" width="0.6" height="15.0" fill="rgb(244,181,43)" rx="2" ry="2" />
+<text  x="788.68" y="335.5" ></text>
+</g>
+<g >
+<title>std::unique_ptr&lt;net::Socket, std::default_delete&lt;net::Socket&gt; &gt;::operator (94,994,088 samples, 0.92%)</title><rect x="269.9" y="645" width="10.9" height="15.0" fill="rgb(254,228,54)" rx="2" ry="2" />
+<text  x="272.93" y="655.5" ></text>
+</g>
+<g >
+<title>std::unordered_map&lt;int, std::function&lt;protocol::Response  (128,611,669 samples, 1.24%)</title><rect x="1048.0" y="549" width="14.6" height="15.0" fill="rgb(217,58,13)" rx="2" ry="2" />
+<text  x="1050.97" y="559.5" ></text>
+</g>
+<g >
+<title>net::Socket* const&amp; std::__get_helper&lt;0ul, net::Socket*, std::default_delete&lt;net::Socket&gt; &gt; (5,050,505 samples, 0.05%)</title><rect x="947.3" y="453" width="0.5" height="15.0" fill="rgb(213,38,9)" rx="2" ry="2" />
+<text  x="950.27" y="463.5" ></text>
+</g>
+<g >
+<title>ip_output (2,823,681,862 samples, 27.29%)</title><rect x="472.5" y="389" width="322.1" height="15.0" fill="rgb(247,194,46)" rx="2" ry="2" />
+<text  x="475.54" y="399.5" >ip_output</text>
+</g>
+<g >
+<title>tcp_write_xmit (3,971,842,593 samples, 38.39%)</title><rect x="370.6" y="437" width="452.9" height="15.0" fill="rgb(231,122,29)" rx="2" ry="2" />
+<text  x="373.55" y="447.5" >tcp_write_xmit</text>
+</g>
+<g >
+<title>nf_nat_ipv4_pre_routing (43,783,999 samples, 0.42%)</title><rect x="751.9" y="197" width="5.0" height="15.0" fill="rgb(227,103,24)" rx="2" ry="2" />
+<text  x="754.93" y="207.5" ></text>
+</g>
+<g >
+<title>__wake_up_sync_key (212,873,667 samples, 2.06%)</title><rect x="620.3" y="117" width="24.3" height="15.0" fill="rgb(226,100,24)" rx="2" ry="2" />
+<text  x="623.32" y="127.5" >_..</text>
+</g>
+<g >
+<title>__hrtimer_run_queues (43,783,999 samples, 0.42%)</title><rect x="751.9" y="117" width="5.0" height="15.0" fill="rgb(237,150,35)" rx="2" ry="2" />
+<text  x="754.93" y="127.5" ></text>
+</g>
+<g >
+<title>std::_Sp_counted_base&lt; (43,720,647 samples, 0.42%)</title><rect x="1116.8" y="709" width="4.9" height="15.0" fill="rgb(211,31,7)" rx="2" ry="2" />
+<text  x="1119.75" y="719.5" ></text>
+</g>
+<g >
+<title>std::__shared_ptr&lt;net::TcpConnection,  (5,050,505 samples, 0.05%)</title><rect x="1091.4" y="645" width="0.6" height="15.0" fill="rgb(235,139,33)" rx="2" ry="2" />
+<text  x="1094.41" y="655.5" ></text>
+</g>
+<g >
+<title>void spdlog::logger::log_&lt;int, unsigned long&gt; (42,248,827 samples, 0.41%)</title><rect x="971.9" y="533" width="4.8" height="15.0" fill="rgb(207,10,2)" rx="2" ry="2" />
+<text  x="974.89" y="543.5" ></text>
+</g>
+<g >
+<title>_raw_spin_lock_bh (79,283,566 samples, 0.77%)</title><rect x="141.7" y="533" width="9.1" height="15.0" fill="rgb(221,75,18)" rx="2" ry="2" />
+<text  x="144.72" y="543.5" ></text>
+</g>
+<g >
+<title>ip_rcv (342,687,567 samples, 3.31%)</title><rect x="732.3" y="229" width="39.0" height="15.0" fill="rgb(209,22,5)" rx="2" ry="2" />
+<text  x="735.25" y="239.5" >ip_..</text>
+</g>
+<g >
+<title>entry_SYSCALL_64 (86,197,656 samples, 0.83%)</title><rect x="1165.7" y="677" width="9.8" height="15.0" fill="rgb(239,156,37)" rx="2" ry="2" />
+<text  x="1168.66" y="687.5" ></text>
+</g>
+<g >
+<title>sock_def_readable (257,539,614 samples, 2.49%)</title><rect x="615.2" y="133" width="29.4" height="15.0" fill="rgb(216,54,13)" rx="2" ry="2" />
+<text  x="618.23" y="143.5" >so..</text>
+</g>
+<g >
+<title>schedule (42,881,037 samples, 0.41%)</title><rect x="54.3" y="677" width="4.9" height="15.0" fill="rgb(254,229,54)" rx="2" ry="2" />
+<text  x="57.32" y="687.5" ></text>
+</g>
+<g >
+<title>std::__shared_count&lt; (42,282,824 samples, 0.41%)</title><rect x="962.2" y="517" width="4.9" height="15.0" fill="rgb(248,201,48)" rx="2" ry="2" />
+<text  x="965.24" y="527.5" ></text>
+</g>
+<g >
+<title>malloc@plt (42,320,174 samples, 0.41%)</title><rect x="1180.3" y="805" width="4.9" height="15.0" fill="rgb(246,192,46)" rx="2" ry="2" />
+<text  x="1183.35" y="815.5" ></text>
+</g>
+<g >
+<title>net::TcpConnection::TcpConnection (8,976,850,600 samples, 86.76%)</title><rect x="88.1" y="693" width="1023.8" height="15.0" fill="rgb(254,228,54)" rx="2" ry="2" />
+<text  x="91.13" y="703.5" >net::TcpConnection::TcpConnection</text>
+</g>
+<g >
+<title>std::__shared_ptr&lt;spdlog::logger,  (84,045,950 samples, 0.81%)</title><rect x="1096.9" y="645" width="9.6" height="15.0" fill="rgb(244,182,43)" rx="2" ry="2" />
+<text  x="1099.94" y="655.5" ></text>
+</g>
+<g >
+<title>tcp_mstamp_refresh (84,530,500 samples, 0.82%)</title><rect x="690.8" y="133" width="9.7" height="15.0" fill="rgb(221,77,18)" rx="2" ry="2" />
+<text  x="693.85" y="143.5" ></text>
+</g>
+<g >
+<title>sysvec_apic_timer_interrupt (43,783,999 samples, 0.42%)</title><rect x="751.9" y="165" width="5.0" height="15.0" fill="rgb(220,69,16)" rx="2" ry="2" />
+<text  x="754.93" y="175.5" ></text>
+</g>
+<g >
+<title>__mod_timer (42,647,210 samples, 0.41%)</title><rect x="610.4" y="117" width="4.8" height="15.0" fill="rgb(234,136,32)" rx="2" ry="2" />
+<text  x="613.36" y="127.5" ></text>
+</g>
+<g >
+<title>std::__shared_count&lt; (84,045,950 samples, 0.81%)</title><rect x="1096.9" y="629" width="9.6" height="15.0" fill="rgb(248,201,48)" rx="2" ry="2" />
+<text  x="1099.94" y="639.5" ></text>
+</g>
+<g >
+<title>reweight_entity (43,783,999 samples, 0.42%)</title><rect x="751.9" y="37" width="5.0" height="15.0" fill="rgb(253,222,53)" rx="2" ry="2" />
+<text  x="754.93" y="47.5" ></text>
+</g>
+<g >
+<title>tcp_check_space (41,193,106 samples, 0.40%)</title><rect x="686.1" y="133" width="4.7" height="15.0" fill="rgb(244,180,43)" rx="2" ry="2" />
+<text  x="689.15" y="143.5" ></text>
+</g>
+<g >
+<title>security_sock_rcv_skb (9,698,328 samples, 0.09%)</title><rect x="585.3" y="149" width="1.1" height="15.0" fill="rgb(240,161,38)" rx="2" ry="2" />
+<text  x="588.26" y="159.5" ></text>
+</g>
+<g >
+<title>std::_Sp_counted_base&lt; (129,294,732 samples, 1.25%)</title><rect x="290.4" y="597" width="14.7" height="15.0" fill="rgb(211,31,7)" rx="2" ry="2" />
+<text  x="293.38" y="607.5" ></text>
+</g>
+<g >
+<title>nf_ct_get_tuple (86,318,553 samples, 0.83%)</title><rect x="462.7" y="325" width="9.8" height="15.0" fill="rgb(218,60,14)" rx="2" ry="2" />
+<text  x="465.70" y="335.5" ></text>
+</g>
+<g >
+<title>__sk_dst_check (42,182,321 samples, 0.41%)</title><rect x="408.1" y="389" width="4.8" height="15.0" fill="rgb(241,169,40)" rx="2" ry="2" />
+<text  x="411.10" y="399.5" ></text>
+</g>
+<g >
+<title>syscall_exit_to_user_mode (85,455,058 samples, 0.83%)</title><rect x="230.9" y="629" width="9.7" height="15.0" fill="rgb(251,211,50)" rx="2" ry="2" />
+<text  x="233.85" y="639.5" ></text>
+</g>
+<g >
+<title>std::shared_ptr&lt;net::TcpConnection&gt;::~shared_ptr (5,050,505 samples, 0.05%)</title><rect x="1091.4" y="661" width="0.6" height="15.0" fill="rgb(240,163,39)" rx="2" ry="2" />
+<text  x="1094.41" y="671.5" ></text>
+</g>
+<g >
+<title>net::TcpConnection::fd (116,278,161 samples, 1.12%)</title><rect x="934.6" y="549" width="13.2" height="15.0" fill="rgb(223,85,20)" rx="2" ry="2" />
+<text  x="937.59" y="559.5" ></text>
+</g>
+<g >
+<title>__check_object_size (212,793,909 samples, 2.06%)</title><rect x="192.2" y="485" width="24.3" height="15.0" fill="rgb(226,98,23)" rx="2" ry="2" />
+<text  x="195.18" y="495.5" >_..</text>
+</g>
+<g >
+<title>std::_Tuple_impl&lt;0ul, net::Socket*, std::default_delete&lt;net::Socket&gt; &gt;::_M_head (10,196,537 samples, 0.10%)</title><rect x="279.6" y="549" width="1.2" height="15.0" fill="rgb(218,63,15)" rx="2" ry="2" />
+<text  x="282.61" y="559.5" ></text>
+</g>
+<g >
+<title>__tcp_transmit_skb (3,759,330,648 samples, 36.33%)</title><rect x="375.4" y="421" width="428.8" height="15.0" fill="rgb(231,122,29)" rx="2" ry="2" />
+<text  x="378.43" y="431.5" >__tcp_transmit_skb</text>
+</g>
+<g >
+<title>std::_Hashtable&lt;int, std::pair&lt;int const, std::function&lt;protocol::Response  (42,248,934 samples, 0.41%)</title><rect x="1052.8" y="501" width="4.8" height="15.0" fill="rgb(224,88,21)" rx="2" ry="2" />
+<text  x="1055.79" y="511.5" ></text>
+</g>
+<g >
+<title>nft_do_chain (84,230,290 samples, 0.81%)</title><rect x="761.7" y="181" width="9.6" height="15.0" fill="rgb(227,103,24)" rx="2" ry="2" />
+<text  x="764.73" y="191.5" ></text>
+</g>
+<g >
+<title>[libc.so.6] (4,963,607,131 samples, 47.97%)</title><rect x="319.6" y="565" width="566.1" height="15.0" fill="rgb(223,84,20)" rx="2" ry="2" />
+<text  x="322.62" y="575.5" >[libc.so.6]</text>
+</g>
+<g >
+<title>_raw_spin_lock (5,050,505 samples, 0.05%)</title><rect x="584.7" y="165" width="0.6" height="15.0" fill="rgb(239,160,38)" rx="2" ry="2" />
+<text  x="587.68" y="175.5" ></text>
+</g>
+<g >
+<title>skb_copy_datagram_iter (296,152,327 samples, 2.86%)</title><rect x="182.7" y="533" width="33.8" height="15.0" fill="rgb(245,188,45)" rx="2" ry="2" />
+<text  x="185.68" y="543.5" >sk..</text>
+</g>
+<g >
+<title>std::unique_ptr&lt;net::Socket, std::default_delete&lt;net::Socket&gt; &gt;::operator (44,569,388 samples, 0.43%)</title><rect x="942.8" y="533" width="5.0" height="15.0" fill="rgb(254,228,54)" rx="2" ry="2" />
+<text  x="945.76" y="543.5" ></text>
+</g>
+<g >
+<title>__errno_location (42,442,904 samples, 0.41%)</title><rect x="255.2" y="677" width="4.8" height="15.0" fill="rgb(233,130,31)" rx="2" ry="2" />
+<text  x="258.19" y="687.5" ></text>
+</g>
+<g >
+<title>syscall_exit_to_user_mode (166,471,547 samples, 1.61%)</title><rect x="861.8" y="517" width="19.0" height="15.0" fill="rgb(251,211,50)" rx="2" ry="2" />
+<text  x="864.81" y="527.5" ></text>
+</g>
+<g >
+<title>entry_SYSCALL_64_after_hwframe (1,206,918,481 samples, 11.67%)</title><rect x="112.7" y="661" width="137.7" height="15.0" fill="rgb(218,63,15)" rx="2" ry="2" />
+<text  x="115.73" y="671.5" >entry_SYSCALL_64_..</text>
+</g>
+<g >
+<title>nft_do_chain_inet (168,348,345 samples, 1.63%)</title><rect x="713.1" y="197" width="19.2" height="15.0" fill="rgb(223,83,19)" rx="2" ry="2" />
+<text  x="716.05" y="207.5" ></text>
+</g>
+<g >
+<title>net::Socket::fd (34,810,583 samples, 0.34%)</title><rect x="930.6" y="549" width="4.0" height="15.0" fill="rgb(211,31,7)" rx="2" ry="2" />
+<text  x="933.61" y="559.5" ></text>
+</g>
+<g >
+<title>std::_Vector_base&lt;net::Channel*, std::allocator&lt;net::Channel*&gt; &gt;::_M_deallocate (42,278,479 samples, 0.41%)</title><rect x="1156.0" y="709" width="4.8" height="15.0" fill="rgb(223,83,19)" rx="2" ry="2" />
+<text  x="1159.02" y="719.5" ></text>
+</g>
+<g >
+<title>tcp_recvmsg_locked (659,986,495 samples, 6.38%)</title><rect x="150.8" y="549" width="75.2" height="15.0" fill="rgb(226,100,24)" rx="2" ry="2" />
+<text  x="153.76" y="559.5" >tcp_recv..</text>
+</g>
+<g >
+<title>net::EventLoop::doPendingFunctors (86,057,049 samples, 0.83%)</title><rect x="1136.5" y="773" width="9.8" height="15.0" fill="rgb(236,145,34)" rx="2" ry="2" />
+<text  x="1139.45" y="783.5" ></text>
+</g>
+<g >
+<title>all (10,346,427,431 samples, 100%)</title><rect x="10.0" y="853" width="1180.0" height="15.0" fill="rgb(213,39,9)" rx="2" ry="2" />
+<text  x="13.00" y="863.5" ></text>
+</g>
+<g >
+<title>std::vector&lt;net::Channel*, std::allocator&lt;net::Channel*&gt; &gt;::~vector (42,278,479 samples, 0.41%)</title><rect x="1156.0" y="741" width="4.8" height="15.0" fill="rgb(207,13,3)" rx="2" ry="2" />
+<text  x="1159.02" y="751.5" ></text>
+</g>
+<g >
+<title>std::_Hashtable&lt;std::__cxx11::basic_string&lt;char, std::char_traits&lt;char&gt;, std::allocator&lt;char&gt; &gt;, std::pair&lt;std::__cxx11::basic_string&lt;char, std::char_traits&lt;char&gt;, std::allocator&lt;char&gt; &gt; const, std::__cxx11::basic_string&lt;char, std::char_traits&lt;char&gt;, std::allocator&lt;char&gt; &gt; &gt;, std::allocator&lt;std::pair&lt;std::__cxx11::basic_string&lt;char, std::char_traits&lt;char&gt;, std::allocator&lt;char&gt; &gt; const, std::__cxx11::basic_string&lt;char, std::char_traits&lt;char&gt;, std::allocator&lt;char&gt; &gt; &gt; &gt;, std::__detail::_Select1st, std::equal_to&lt;std::__cxx11::basic_string&lt;char, std::char_traits&lt;char&gt;, std::allocator&lt;char&gt; &gt; &gt;, std::hash&lt;std::__cxx11::basic_string&lt;char, std::char_traits&lt;char&gt;, std::allocator&lt;char&gt; &gt; &gt;, std::__detail::_Mod_range_hashing, std::__detail::_Default_ranged_hash, std::__detail::_Prime_rehash_policy, std::__detail::_Hashtable_traits&lt;true, false, true&gt; &gt;::_M_find_node (200,766,574 samples, 1.94%)</title><rect x="1020.1" y="421" width="22.9" height="15.0" fill="rgb(228,108,26)" rx="2" ry="2" />
+<text  x="1023.08" y="431.5" >s..</text>
+</g>
+<g >
+<title>std::once_flag::_Prepare_execution::~_Prepare_execution (42,198,819 samples, 0.41%)</title><rect x="901.5" y="501" width="4.8" height="15.0" fill="rgb(226,96,23)" rx="2" ry="2" />
+<text  x="904.50" y="511.5" ></text>
+</g>
+<g >
+<title>protocol::Request::Request (43,013,821 samples, 0.42%)</title><rect x="314.7" y="581" width="4.9" height="15.0" fill="rgb(242,170,40)" rx="2" ry="2" />
+<text  x="317.71" y="591.5" ></text>
+</g>
+<g >
+<title>std::__shared_ptr&lt;net::TcpConnection,  (42,444,097 samples, 0.41%)</title><rect x="285.5" y="661" width="4.9" height="15.0" fill="rgb(235,139,33)" rx="2" ry="2" />
+<text  x="288.54" y="671.5" ></text>
+</g>
+<g >
+<title>std::tuple_element&lt;0ul, std::tuple&lt;net::Socket*, std::default_delete&lt;net::Socket&gt; &gt; &gt;::type const&amp; std::get&lt;0ul, net::Socket*, std::default_delete&lt;net::Socket&gt; &gt; (86,197,656 samples, 0.83%)</title><rect x="1165.7" y="757" width="9.8" height="15.0" fill="rgb(207,13,3)" rx="2" ry="2" />
+<text  x="1168.66" y="767.5" ></text>
+</g>
+<g >
+<title>tcp_skb_entail (42,363,887 samples, 0.41%)</title><rect x="833.7" y="453" width="4.8" height="15.0" fill="rgb(241,168,40)" rx="2" ry="2" />
+<text  x="836.70" y="463.5" ></text>
+</g>
+<g >
+<title>tcp_stream_alloc_skb (204,112,312 samples, 1.97%)</title><rect x="838.5" y="453" width="23.3" height="15.0" fill="rgb(252,218,52)" rx="2" ry="2" />
+<text  x="841.54" y="463.5" >t..</text>
+</g>
+<g >
+<title>tcp_event_new_data_sent (84,042,060 samples, 0.81%)</title><rect x="814.0" y="421" width="9.5" height="15.0" fill="rgb(233,132,31)" rx="2" ry="2" />
+<text  x="816.95" y="431.5" ></text>
+</g>
+<g >
+<title>std::unique_ptr&lt;net::Socket, std::default_delete&lt;net::Socket&gt; &gt;::operator bool (42,279,922 samples, 0.41%)</title><rect x="967.1" y="549" width="4.8" height="15.0" fill="rgb(233,129,30)" rx="2" ry="2" />
+<text  x="970.07" y="559.5" ></text>
+</g>
+<g >
+<title>tcp_rack_advance (37,109,456 samples, 0.36%)</title><rect x="681.9" y="117" width="4.2" height="15.0" fill="rgb(215,50,12)" rx="2" ry="2" />
+<text  x="684.92" y="127.5" ></text>
+</g>
+<g >
+<title>sk_reset_timer (42,647,210 samples, 0.41%)</title><rect x="610.4" y="133" width="4.8" height="15.0" fill="rgb(247,197,47)" rx="2" ry="2" />
+<text  x="613.36" y="143.5" ></text>
+</g>
+<g >
+<title>entry_SYSCALL_64_after_hwframe (426,212,873 samples, 4.12%)</title><rect x="15.6" y="757" width="48.6" height="15.0" fill="rgb(218,63,15)" rx="2" ry="2" />
+<text  x="18.56" y="767.5" >entr..</text>
+</g>
+<g >
+<title>ip_local_deliver_finish (1,493,802,794 samples, 14.44%)</title><rect x="539.7" y="213" width="170.3" height="15.0" fill="rgb(225,95,22)" rx="2" ry="2" />
+<text  x="542.66" y="223.5" >ip_local_deliver_finish</text>
+</g>
+<g >
+<title>std::vector&lt;net::Channel*, std::allocator&lt;net::Channel*&gt; &gt;::reserve (42,713,802 samples, 0.41%)</title><rect x="1131.6" y="757" width="4.9" height="15.0" fill="rgb(243,177,42)" rx="2" ry="2" />
+<text  x="1134.58" y="767.5" ></text>
+</g>
+<g >
+<title>__x64_sys_recvfrom (951,497,880 samples, 9.20%)</title><rect x="122.3" y="629" width="108.6" height="15.0" fill="rgb(224,88,21)" rx="2" ry="2" />
+<text  x="125.33" y="639.5" >__x64_sys_rec..</text>
+</g>
+<g >
+<title>std::_Function_handler&lt;protocol::Response  (372,494,657 samples, 3.60%)</title><rect x="1005.5" y="533" width="42.5" height="15.0" fill="rgb(230,118,28)" rx="2" ry="2" />
+<text  x="1008.49" y="543.5" >std:..</text>
+</g>
+<g >
+<title>std::enable_if&lt;is_invocable_r_v&lt;void, net::TcpConnection::TcpConnection (8,976,850,600 samples, 86.76%)</title><rect x="88.1" y="725" width="1023.8" height="15.0" fill="rgb(245,184,44)" rx="2" ry="2" />
+<text  x="91.13" y="735.5" >std::enable_if&lt;is_invocable_r_v&lt;void, net::TcpConnection::TcpConnection</text>
+</g>
+<g >
+<title>std::__cxx11::basic_string&lt;char, std::char_traits&lt;char&gt;, std::allocator&lt;char&gt; &gt;::~basic_string (207,938,855 samples, 2.01%)</title><rect x="1067.7" y="581" width="23.7" height="15.0" fill="rgb(248,201,48)" rx="2" ry="2" />
+<text  x="1070.69" y="591.5" >s..</text>
+</g>
+<g >
+<title>sock_rfree (42,525,239 samples, 0.41%)</title><rect x="216.5" y="533" width="4.8" height="15.0" fill="rgb(222,80,19)" rx="2" ry="2" />
+<text  x="219.45" y="543.5" ></text>
+</g>
+<g >
+<title>net::Socket::fd (32,199,986 samples, 0.31%)</title><rect x="934.6" y="533" width="3.7" height="15.0" fill="rgb(211,31,7)" rx="2" ry="2" />
+<text  x="937.59" y="543.5" ></text>
+</g>
+<g >
+<title>__rcu_read_lock (42,624,271 samples, 0.41%)</title><rect x="554.0" y="165" width="4.9" height="15.0" fill="rgb(220,69,16)" rx="2" ry="2" />
+<text  x="557.04" y="175.5" ></text>
+</g>
+<g >
+<title>sockfd_lookup_light (42,287,700 samples, 0.41%)</title><rect x="226.0" y="597" width="4.9" height="15.0" fill="rgb(225,95,22)" rx="2" ry="2" />
+<text  x="229.03" y="607.5" ></text>
+</g>
+<g >
+<title>rep_movs_alternative (42,207,918 samples, 0.41%)</title><rect x="187.4" y="485" width="4.8" height="15.0" fill="rgb(205,1,0)" rx="2" ry="2" />
+<text  x="190.37" y="495.5" ></text>
+</g>
+<g >
+<title>std::function&lt;void  (86,757,076 samples, 0.84%)</title><rect x="952.3" y="549" width="9.9" height="15.0" fill="rgb(207,13,3)" rx="2" ry="2" />
+<text  x="955.35" y="559.5" ></text>
+</g>
+<g >
+<title>std::_Sp_counted_base&lt; (42,548,724 samples, 0.41%)</title><rect x="1121.7" y="693" width="4.9" height="15.0" fill="rgb(211,31,7)" rx="2" ry="2" />
+<text  x="1124.74" y="703.5" ></text>
+</g>
+<g >
+<title>nft_do_chain (168,348,345 samples, 1.63%)</title><rect x="713.1" y="181" width="19.2" height="15.0" fill="rgb(227,103,24)" rx="2" ry="2" />
+<text  x="716.05" y="191.5" ></text>
+</g>
+<g >
+<title>ktime_get (85,715,688 samples, 0.83%)</title><rect x="804.2" y="421" width="9.8" height="15.0" fill="rgb(207,10,2)" rx="2" ry="2" />
+<text  x="807.18" y="431.5" ></text>
+</g>
+<g >
+<title>handle_softirqs (2,433,105,210 samples, 23.52%)</title><rect x="508.2" y="309" width="277.5" height="15.0" fill="rgb(238,156,37)" rx="2" ry="2" />
+<text  x="511.19" y="319.5" >handle_softirqs</text>
+</g>
+<g >
+<title>std::__shared_count&lt; (85,870,205 samples, 0.83%)</title><rect x="906.3" y="501" width="9.8" height="15.0" fill="rgb(248,201,48)" rx="2" ry="2" />
+<text  x="909.31" y="511.5" ></text>
+</g>
+<g >
+<title>__x64_sys_sendto (4,732,720,858 samples, 45.74%)</title><rect x="322.1" y="517" width="539.7" height="15.0" fill="rgb(213,37,8)" rx="2" ry="2" />
+<text  x="325.05" y="527.5" >__x64_sys_sendto</text>
+</g>
+<g >
+<title>std::__uniq_ptr_impl&lt;net::Socket, std::default_delete&lt;net::Socket&gt; &gt;::_M_ptr (52,707,187 samples, 0.51%)</title><rect x="274.8" y="597" width="6.0" height="15.0" fill="rgb(243,175,41)" rx="2" ry="2" />
+<text  x="277.76" y="607.5" ></text>
+</g>
+<g >
+<title>std::unique_ptr&lt;net::Socket, std::default_delete&lt;net::Socket&gt; &gt;::get (44,569,388 samples, 0.43%)</title><rect x="942.8" y="501" width="5.0" height="15.0" fill="rgb(246,190,45)" rx="2" ry="2" />
+<text  x="945.76" y="511.5" ></text>
+</g>
+<g >
+<title>tcp_ack_update_rtt (43,561,203 samples, 0.42%)</title><rect x="676.9" y="117" width="5.0" height="15.0" fill="rgb(213,41,9)" rx="2" ry="2" />
+<text  x="679.95" y="127.5" ></text>
+</g>
+<g >
+<title>std::enable_if&lt;is_invocable_r_v&lt;void, server::KvServer::KvServer (6,894,222,089 samples, 66.63%)</title><rect x="305.1" y="629" width="786.3" height="15.0" fill="rgb(226,99,23)" rx="2" ry="2" />
+<text  x="308.13" y="639.5" >std::enable_if&lt;is_invocable_r_v&lt;void, server::KvServer::KvServer</text>
+</g>
+<g >
+<title>cubictcp_cong_avoid (40,114,014 samples, 0.39%)</title><rect x="672.4" y="117" width="4.5" height="15.0" fill="rgb(214,45,10)" rx="2" ry="2" />
+<text  x="675.37" y="127.5" ></text>
+</g>
+<g >
+<title>__siphash_unaligned (5,050,505 samples, 0.05%)</title><rect x="452.6" y="309" width="0.6" height="15.0" fill="rgb(221,74,17)" rx="2" ry="2" />
+<text  x="455.65" y="319.5" ></text>
+</g>
+<g >
+<title>[unknown] (128,409,101 samples, 1.24%)</title><rect x="1160.8" y="805" width="14.7" height="15.0" fill="rgb(210,24,5)" rx="2" ry="2" />
+<text  x="1163.85" y="815.5" ></text>
+</g>
+<g >
+<title>ktime_get (84,530,500 samples, 0.82%)</title><rect x="690.8" y="117" width="9.7" height="15.0" fill="rgb(207,10,2)" rx="2" ry="2" />
+<text  x="693.85" y="127.5" ></text>
+</g>
+<g >
+<title>std::unique_ptr&lt;net::Socket, std::default_delete&lt;net::Socket&gt; &gt;::operator bool (39,508,787 samples, 0.38%)</title><rect x="938.3" y="533" width="4.5" height="15.0" fill="rgb(233,129,30)" rx="2" ry="2" />
+<text  x="941.26" y="543.5" ></text>
+</g>
+<g >
+<title>net::TcpConnection::handleRead (7,383,816,281 samples, 71.37%)</title><rect x="265.0" y="677" width="842.1" height="15.0" fill="rgb(218,62,14)" rx="2" ry="2" />
+<text  x="267.98" y="687.5" >net::TcpConnection::handleRead</text>
+</g>
+<g >
+<title>tcp_rcv_established (999,366,618 samples, 9.66%)</title><rect x="596.0" y="149" width="114.0" height="15.0" fill="rgb(242,170,40)" rx="2" ry="2" />
+<text  x="599.05" y="159.5" >tcp_rcv_establ..</text>
+</g>
+<g >
+<title>std::__uniq_ptr_impl&lt;net::Socket, std::default_delete&lt;net::Socket&gt; &gt;::_M_ptr (44,569,388 samples, 0.43%)</title><rect x="942.8" y="485" width="5.0" height="15.0" fill="rgb(243,175,41)" rx="2" ry="2" />
+<text  x="945.76" y="495.5" ></text>
+</g>
+<g >
+<title>nf_hook_slow (213,708,189 samples, 2.07%)</title><rect x="747.0" y="213" width="24.3" height="15.0" fill="rgb(243,175,42)" rx="2" ry="2" />
+<text  x="749.96" y="223.5" >n..</text>
+</g>
+<g >
+<title>[libc.so.6] (86,197,656 samples, 0.83%)</title><rect x="1165.7" y="693" width="9.8" height="15.0" fill="rgb(223,84,20)" rx="2" ry="2" />
+<text  x="1168.66" y="703.5" ></text>
+</g>
+<g >
+<title>ip_send_check (42,595,247 samples, 0.41%)</title><rect x="423.1" y="357" width="4.9" height="15.0" fill="rgb(237,151,36)" rx="2" ry="2" />
+<text  x="426.13" y="367.5" ></text>
+</g>
+<g >
+<title>[libc.so.6] (83,959,892 samples, 0.81%)</title><rect x="986.3" y="549" width="9.6" height="15.0" fill="rgb(223,84,20)" rx="2" ry="2" />
+<text  x="989.30" y="559.5" ></text>
+</g>
+<g >
+<title>tcp_established_options (42,292,494 samples, 0.41%)</title><rect x="799.4" y="405" width="4.8" height="15.0" fill="rgb(241,168,40)" rx="2" ry="2" />
+<text  x="802.35" y="415.5" ></text>
+</g>
+<g >
+<title>std::_Function_handler&lt;void  (8,976,850,600 samples, 86.76%)</title><rect x="88.1" y="741" width="1023.8" height="15.0" fill="rgb(245,187,44)" rx="2" ry="2" />
+<text  x="91.13" y="751.5" >std::_Function_handler&lt;void </text>
+</g>
+<g >
+<title>std::_Hashtable&lt;std::__cxx11::basic_string&lt;char, std::char_traits&lt;char&gt;, std::allocator&lt;char&gt; &gt;, std::pair&lt;std::__cxx11::basic_string&lt;char, std::char_traits&lt;char&gt;, std::allocator&lt;char&gt; &gt; const, std::__cxx11::basic_string&lt;char, std::char_traits&lt;char&gt;, std::allocator&lt;char&gt; &gt; &gt;, std::allocator&lt;std::pair&lt;std::__cxx11::basic_string&lt;char, std::char_traits&lt;char&gt;, std::allocator&lt;char&gt; &gt; const, std::__cxx11::basic_string&lt;char, std::char_traits&lt;char&gt;, std::allocator&lt;char&gt; &gt; &gt; &gt;, std::__detail::_Select1st, std::equal_to&lt;std::__cxx11::basic_string&lt;char, std::char_traits&lt;char&gt;, std::allocator&lt;char&gt; &gt; &gt;, std::hash&lt;std::__cxx11::basic_string&lt;char, std::char_traits&lt;char&gt;, std::allocator&lt;char&gt; &gt; &gt;, std::__detail::_Mod_range_hashing, std::__detail::_Default_ranged_hash, std::__detail::_Prime_rehash_policy, std::__detail::_Hashtable_traits&lt;true, false, true&gt; &gt;::_M_find_before_node (44,071,966 samples, 0.43%)</title><rect x="1015.1" y="421" width="5.0" height="15.0" fill="rgb(214,44,10)" rx="2" ry="2" />
+<text  x="1018.06" y="431.5" ></text>
+</g>
+<g >
+<title>mutex_unlock (42,571,763 samples, 0.41%)</title><rect x="49.5" y="693" width="4.8" height="15.0" fill="rgb(251,212,50)" rx="2" ry="2" />
+<text  x="52.47" y="703.5" ></text>
+</g>
+<g >
+<title>std::_Sp_counted_base&lt; (5,050,505 samples, 0.05%)</title><rect x="1091.4" y="613" width="0.6" height="15.0" fill="rgb(211,31,7)" rx="2" ry="2" />
+<text  x="1094.41" y="623.5" ></text>
+</g>
+<g >
+<title>server::KvServer::handleGET (330,626,305 samples, 3.20%)</title><rect x="1010.3" y="469" width="37.7" height="15.0" fill="rgb(206,8,2)" rx="2" ry="2" />
+<text  x="1013.26" y="479.5" >ser..</text>
+</g>
+<g >
+<title>sk_filter_trim_cap (9,698,328 samples, 0.09%)</title><rect x="585.3" y="165" width="1.1" height="15.0" fill="rgb(207,11,2)" rx="2" ry="2" />
+<text  x="588.26" y="175.5" ></text>
+</g>
+<g >
+<title>arch_exit_to_user_mode_prepare.isra.0 (85,455,058 samples, 0.83%)</title><rect x="230.9" y="613" width="9.7" height="15.0" fill="rgb(251,215,51)" rx="2" ry="2" />
+<text  x="233.85" y="623.5" ></text>
+</g>
+<g >
+<title>std::__shared_count&lt; (129,294,732 samples, 1.25%)</title><rect x="290.4" y="613" width="14.7" height="15.0" fill="rgb(248,201,48)" rx="2" ry="2" />
+<text  x="293.38" y="623.5" ></text>
+</g>
+<g >
+<title>net::Channel::handleEvent (9,230,804,929 samples, 89.22%)</title><rect x="73.8" y="773" width="1052.8" height="15.0" fill="rgb(224,89,21)" rx="2" ry="2" />
+<text  x="76.83" y="783.5" >net::Channel::handleEvent</text>
+</g>
+<g >
+<title>__ip_queue_xmit (3,548,885,658 samples, 34.30%)</title><rect x="389.8" y="405" width="404.8" height="15.0" fill="rgb(253,223,53)" rx="2" ry="2" />
+<text  x="392.83" y="415.5" >__ip_queue_xmit</text>
+</g>
+<g >
+<title>fdget (42,287,700 samples, 0.41%)</title><rect x="226.0" y="581" width="4.9" height="15.0" fill="rgb(241,167,40)" rx="2" ry="2" />
+<text  x="229.03" y="591.5" ></text>
+</g>
+<g >
+<title>nf_conntrack_in (43,531,237 samples, 0.42%)</title><rect x="747.0" y="197" width="4.9" height="15.0" fill="rgb(206,8,2)" rx="2" ry="2" />
+<text  x="749.96" y="207.5" ></text>
+</g>
+<g >
+<title>void spdlog::logger::log&lt;int, long&amp;&gt; (5,050,505 samples, 0.05%)</title><rect x="1106.5" y="661" width="0.6" height="15.0" fill="rgb(244,180,43)" rx="2" ry="2" />
+<text  x="1109.52" y="671.5" ></text>
+</g>
+<g >
+<title>fpregs_assert_state_consistent (43,547,442 samples, 0.42%)</title><rect x="235.6" y="597" width="5.0" height="15.0" fill="rgb(228,109,26)" rx="2" ry="2" />
+<text  x="238.63" y="607.5" ></text>
+</g>
+<g >
+<title>malloc (42,594,970 samples, 0.41%)</title><rect x="1175.5" y="805" width="4.8" height="15.0" fill="rgb(230,119,28)" rx="2" ry="2" />
+<text  x="1178.49" y="815.5" ></text>
+</g>
+<g >
+<title>__mod_memcg_state (128,193,589 samples, 1.24%)</title><rect x="163.2" y="485" width="14.6" height="15.0" fill="rgb(205,1,0)" rx="2" ry="2" />
+<text  x="166.18" y="495.5" ></text>
+</g>
+<g >
+<title>std::shared_ptr&lt;void&gt;::~shared_ptr (85,954,878 samples, 0.83%)</title><rect x="1111.9" y="757" width="9.8" height="15.0" fill="rgb(222,81,19)" rx="2" ry="2" />
+<text  x="1114.93" y="767.5" ></text>
+</g>
+<g >
+<title>std::shared_ptr&lt;spdlog::logger&gt;::~shared_ptr (127,465,878 samples, 1.23%)</title><rect x="1092.0" y="661" width="14.5" height="15.0" fill="rgb(250,207,49)" rx="2" ry="2" />
+<text  x="1094.99" y="671.5" ></text>
+</g>
+<g >
+<title>ip_finish_output2 (2,703,557,350 samples, 26.13%)</title><rect x="477.9" y="373" width="308.4" height="15.0" fill="rgb(219,67,16)" rx="2" ry="2" />
+<text  x="480.92" y="383.5" >ip_finish_output2</text>
+</g>
+<g >
+<title>mod_memcg_state (128,193,589 samples, 1.24%)</title><rect x="163.2" y="501" width="14.6" height="15.0" fill="rgb(232,127,30)" rx="2" ry="2" />
+<text  x="166.18" y="511.5" ></text>
+</g>
+<g >
+<title>tcp_rcv_space_adjust (41,452,005 samples, 0.40%)</title><rect x="221.3" y="533" width="4.7" height="15.0" fill="rgb(231,121,29)" rx="2" ry="2" />
+<text  x="224.30" y="543.5" ></text>
+</g>
+<g >
+<title>std::__uniq_ptr_impl&lt;net::Socket, std::default_delete&lt;net::Socket&gt; &gt;::_M_ptr (86,197,656 samples, 0.83%)</title><rect x="1165.7" y="773" width="9.8" height="15.0" fill="rgb(243,175,41)" rx="2" ry="2" />
+<text  x="1168.66" y="783.5" ></text>
+</g>
+<g >
+<title>skb_release_data (72,906,276 samples, 0.70%)</title><rect x="654.3" y="101" width="8.3" height="15.0" fill="rgb(209,20,4)" rx="2" ry="2" />
+<text  x="657.31" y="111.5" ></text>
+</g>
+<g >
+<title>__ip_local_out (480,564,211 samples, 4.64%)</title><rect x="417.7" y="373" width="54.8" height="15.0" fill="rgb(206,5,1)" rx="2" ry="2" />
+<text  x="420.73" y="383.5" >__ip_..</text>
+</g>
+<g >
+<title>std::char_traits&lt;char&gt;::length (39,487,310 samples, 0.38%)</title><rect x="947.8" y="549" width="4.5" height="15.0" fill="rgb(245,188,44)" rx="2" ry="2" />
+<text  x="950.85" y="559.5" ></text>
+</g>
+<g >
+<title>validate_xmit_skb (5,050,505 samples, 0.05%)</title><rect x="785.7" y="341" width="0.6" height="15.0" fill="rgb(222,82,19)" rx="2" ry="2" />
+<text  x="788.68" y="351.5" ></text>
+</g>
+<g >
+<title>__sysvec_apic_timer_interrupt (43,783,999 samples, 0.42%)</title><rect x="751.9" y="149" width="5.0" height="15.0" fill="rgb(242,173,41)" rx="2" ry="2" />
+<text  x="754.93" y="159.5" ></text>
+</g>
+<g >
+<title>std::_Hashtable&lt;std::__cxx11::basic_string&lt;char, std::char_traits&lt;char&gt;, std::allocator&lt;char&gt; &gt;, std::pair&lt;std::__cxx11::basic_string&lt;char, std::char_traits&lt;char&gt;, std::allocator&lt;char&gt; &gt; const, std::__cxx11::basic_string&lt;char, std::char_traits&lt;char&gt;, std::allocator&lt;char&gt; &gt; &gt;, std::allocator&lt;std::pair&lt;std::__cxx11::basic_string&lt;char, std::char_traits&lt;char&gt;, std::allocator&lt;char&gt; &gt; const, std::__cxx11::basic_string&lt;char, std::char_traits&lt;char&gt;, std::allocator&lt;char&gt; &gt; &gt; &gt;, std::__detail::_Select1st, std::equal_to&lt;std::__cxx11::basic_string&lt;char, std::char_traits&lt;char&gt;, std::allocator&lt;char&gt; &gt; &gt;, std::hash&lt;std::__cxx11::basic_string&lt;char, std::char_traits&lt;char&gt;, std::allocator&lt;char&gt; &gt; &gt;, std::__detail::_Mod_range_hashing, std::__detail::_Default_ranged_hash, std::__detail::_Prime_rehash_policy, std::__detail::_Hashtable_traits&lt;true, false, true&gt; &gt;::size (43,724,945 samples, 0.42%)</title><rect x="1043.0" y="437" width="5.0" height="15.0" fill="rgb(225,93,22)" rx="2" ry="2" />
+<text  x="1045.98" y="447.5" ></text>
+</g>
+<g >
+<title>tcp_ack (364,320,341 samples, 3.52%)</title><rect x="644.6" y="133" width="41.5" height="15.0" fill="rgb(230,115,27)" rx="2" ry="2" />
+<text  x="647.60" y="143.5" >tcp..</text>
+</g>
+<g >
+<title>net::EpollPoller::poll (86,471,461 samples, 0.84%)</title><rect x="1126.6" y="773" width="9.9" height="15.0" fill="rgb(216,54,13)" rx="2" ry="2" />
+<text  x="1129.59" y="783.5" ></text>
+</g>
+<g >
+<title>std::__shared_ptr&lt;net::TcpConnection,  (129,294,732 samples, 1.25%)</title><rect x="290.4" y="629" width="14.7" height="15.0" fill="rgb(235,139,33)" rx="2" ry="2" />
+<text  x="293.38" y="639.5" ></text>
+</g>
+<g >
+<title>std::tuple_element&lt;0ul, std::tuple&lt;net::Socket*, std::default_delete&lt;net::Socket&gt; &gt; &gt;::type const&amp; std::get&lt;0ul, net::Socket*, std::default_delete&lt;net::Socket&gt; &gt; (44,569,388 samples, 0.43%)</title><rect x="942.8" y="469" width="5.0" height="15.0" fill="rgb(207,13,3)" rx="2" ry="2" />
+<text  x="945.76" y="479.5" ></text>
+</g>
+<g >
+<title>std::__detail::_Hashtable_base&lt;std::__cxx11::basic_string&lt;char, std::char_traits&lt;char&gt;, std::allocator&lt;char&gt; &gt;, std::pair&lt;std::__cxx11::basic_string&lt;char, std::char_traits&lt;char&gt;, std::allocator&lt;char&gt; &gt; const, std::__cxx11::basic_string&lt;char, std::char_traits&lt;char&gt;, std::allocator&lt;char&gt; &gt; &gt;, std::__detail::_Select1st, std::equal_to&lt;std::__cxx11::basic_string&lt;char, std::char_traits&lt;char&gt;, std::allocator&lt;char&gt; &gt; &gt;, std::hash&lt;std::__cxx11::basic_string&lt;char, std::char_traits&lt;char&gt;, std::allocator&lt;char&gt; &gt; &gt;, std::__detail::_Mod_range_hashing, std::__detail::_Default_ranged_hash, std::__detail::_Hashtable_traits&lt;true, false, true&gt; &gt;::_M_equals (158,383,680 samples, 1.53%)</title><rect x="1024.9" y="389" width="18.1" height="15.0" fill="rgb(239,160,38)" rx="2" ry="2" />
+<text  x="1027.92" y="399.5" ></text>
+</g>
+<g >
+<title>void std::__cxx11::basic_string&lt;char, std::char_traits&lt;char&gt;, std::allocator&lt;char&gt; &gt;::_M_construct&lt;char const*&gt; (42,057,953 samples, 0.41%)</title><rect x="1000.7" y="549" width="4.8" height="15.0" fill="rgb(254,226,54)" rx="2" ry="2" />
+<text  x="1003.69" y="559.5" ></text>
+</g>
+<g >
+<title>std::function&lt;void  (6,894,222,089 samples, 66.63%)</title><rect x="305.1" y="661" width="786.3" height="15.0" fill="rgb(207,13,3)" rx="2" ry="2" />
+<text  x="308.13" y="671.5" >std::function&lt;void </text>
+</g>
+<g >
+<title>std::vector&lt;net::Channel*, std::allocator&lt;net::Channel*&gt; &gt;::_M_move_assign (85,932,598 samples, 0.83%)</title><rect x="1151.0" y="757" width="9.8" height="15.0" fill="rgb(238,151,36)" rx="2" ry="2" />
+<text  x="1154.05" y="767.5" ></text>
+</g>
+<g >
+<title>[libc.so.6] (431,263,378 samples, 4.17%)</title><rect x="15.0" y="773" width="49.2" height="15.0" fill="rgb(223,84,20)" rx="2" ry="2" />
+<text  x="17.98" y="783.5" >[lib..</text>
+</g>
+<g >
+<title>sock_recvmsg (825,033,528 samples, 7.97%)</title><rect x="131.9" y="597" width="94.1" height="15.0" fill="rgb(206,5,1)" rx="2" ry="2" />
+<text  x="134.93" y="607.5" >sock_recvmsg</text>
+</g>
+<g >
+<title>std::unique_ptr&lt;net::Socket, std::default_delete&lt;net::Socket&gt; &gt;::get (52,707,187 samples, 0.51%)</title><rect x="274.8" y="613" width="6.0" height="15.0" fill="rgb(246,190,45)" rx="2" ry="2" />
+<text  x="277.76" y="623.5" ></text>
+</g>
+<g >
+<title>do_softirq.part.0 (2,433,105,210 samples, 23.52%)</title><rect x="508.2" y="325" width="277.5" height="15.0" fill="rgb(233,131,31)" rx="2" ry="2" />
+<text  x="511.19" y="335.5" >do_softirq.part.0</text>
+</g>
+<g >
+<title>std::shared_ptr&lt;spdlog::logger&gt;::~shared_ptr (42,282,824 samples, 0.41%)</title><rect x="962.2" y="549" width="4.9" height="15.0" fill="rgb(250,207,49)" rx="2" ry="2" />
+<text  x="965.24" y="559.5" ></text>
+</g>
+<g >
+<title>Server::getLogger (224,144,288 samples, 2.17%)</title><rect x="890.5" y="549" width="25.6" height="15.0" fill="rgb(243,175,42)" rx="2" ry="2" />
+<text  x="893.54" y="559.5" >S..</text>
+</g>
+<g >
+<title>[unknown] (255,620,324 samples, 2.47%)</title><rect x="1160.8" y="821" width="29.2" height="15.0" fill="rgb(210,24,5)" rx="2" ry="2" />
+<text  x="1163.85" y="831.5" >[u..</text>
+</g>
+<g >
+<title>__virt_addr_valid (169,950,393 samples, 1.64%)</title><rect x="197.1" y="469" width="19.4" height="15.0" fill="rgb(216,53,12)" rx="2" ry="2" />
+<text  x="200.07" y="479.5" ></text>
+</g>
+<g >
+<title>net::Buffer::peek (42,251,004 samples, 0.41%)</title><rect x="995.9" y="549" width="4.8" height="15.0" fill="rgb(244,179,42)" rx="2" ry="2" />
+<text  x="998.87" y="559.5" ></text>
+</g>
+<g >
+<title>std::unique_ptr&lt;net::Socket, std::default_delete&lt;net::Socket&gt; &gt;::get (39,508,787 samples, 0.38%)</title><rect x="938.3" y="517" width="4.5" height="15.0" fill="rgb(246,190,45)" rx="2" ry="2" />
+<text  x="941.26" y="527.5" ></text>
+</g>
+<g >
+<title>std::__shared_count&lt; (85,954,878 samples, 0.83%)</title><rect x="1111.9" y="725" width="9.8" height="15.0" fill="rgb(248,201,48)" rx="2" ry="2" />
+<text  x="1114.93" y="735.5" ></text>
+</g>
+<g >
+<title>cgroup_rstat_updated (43,864,421 samples, 0.42%)</title><rect x="172.8" y="469" width="5.0" height="15.0" fill="rgb(244,180,43)" rx="2" ry="2" />
+<text  x="175.79" y="479.5" ></text>
+</g>
+<g >
+<title>server::KvServer::onMessage (6,559,267,193 samples, 63.40%)</title><rect x="319.6" y="581" width="748.1" height="15.0" fill="rgb(251,213,50)" rx="2" ry="2" />
+<text  x="322.62" y="591.5" >server::KvServer::onMessage</text>
+</g>
+<g >
+<title>void spdlog::logger::log&lt;int, unsigned long&gt; (42,248,827 samples, 0.41%)</title><rect x="971.9" y="549" width="4.8" height="15.0" fill="rgb(221,73,17)" rx="2" ry="2" />
+<text  x="974.89" y="559.5" ></text>
+</g>
+<g >
+<title>net::TcpConnection::fd (138,416,497 samples, 1.34%)</title><rect x="265.0" y="661" width="15.8" height="15.0" fill="rgb(223,85,20)" rx="2" ry="2" />
+<text  x="267.98" y="671.5" ></text>
+</g>
+<g >
+<title>std::_Hashtable&lt;std::__cxx11::basic_string&lt;char, std::char_traits&lt;char&gt;, std::allocator&lt;char&gt; &gt;, std::pair&lt;std::__cxx11::basic_string&lt;char, std::char_traits&lt;char&gt;, std::allocator&lt;char&gt; &gt; const, std::__cxx11::basic_string&lt;char, std::char_traits&lt;char&gt;, std::allocator&lt;char&gt; &gt; &gt;, std::allocator&lt;std::pair&lt;std::__cxx11::basic_string&lt;char, std::char_traits&lt;char&gt;, std::allocator&lt;char&gt; &gt; const, std::__cxx11::basic_string&lt;char, std::char_traits&lt;char&gt;, std::allocator&lt;char&gt; &gt; &gt; &gt;, std::__detail::_Select1st, std::equal_to&lt;std::__cxx11::basic_string&lt;char, std::char_traits&lt;char&gt;, std::allocator&lt;char&gt; &gt; &gt;, std::hash&lt;std::__cxx11::basic_string&lt;char, std::char_traits&lt;char&gt;, std::allocator&lt;char&gt; &gt; &gt;, std::__detail::_Mod_range_hashing, std::__detail::_Default_ranged_hash, std::__detail::_Prime_rehash_policy, std::__detail::_Hashtable_traits&lt;true, false, true&gt; &gt;::_M_bucket_index (42,382,894 samples, 0.41%)</title><rect x="1020.1" y="389" width="4.8" height="15.0" fill="rgb(214,44,10)" rx="2" ry="2" />
+<text  x="1023.08" y="399.5" ></text>
+</g>
+<g >
+<title>net::Channel::handleEvent (43,704,137 samples, 0.42%)</title><rect x="10.0" y="789" width="5.0" height="15.0" fill="rgb(224,89,21)" rx="2" ry="2" />
+<text  x="13.00" y="799.5" ></text>
+</g>
+<g >
+<title>main (10,090,807,107 samples, 97.53%)</title><rect x="10.0" y="805" width="1150.8" height="15.0" fill="rgb(243,179,42)" rx="2" ry="2" />
+<text  x="13.00" y="815.5" >main</text>
+</g>
+<g >
+<title>skb_release_head_state (41,760,115 samples, 0.40%)</title><rect x="662.6" y="101" width="4.8" height="15.0" fill="rgb(226,100,24)" rx="2" ry="2" />
+<text  x="665.63" y="111.5" ></text>
+</g>
+<g >
+<title>std::tuple_element&lt;0ul, std::tuple&lt;net::Socket*, std::default_delete&lt;net::Socket&gt; &gt; &gt;::type const&amp; std::get&lt;0ul, net::Socket*, std::default_delete&lt;net::Socket&gt; &gt; (52,707,187 samples, 0.51%)</title><rect x="274.8" y="581" width="6.0" height="15.0" fill="rgb(207,13,3)" rx="2" ry="2" />
+<text  x="277.76" y="591.5" ></text>
+</g>
+<g >
+<title>clear_bhb_loop (5,050,505 samples, 0.05%)</title><rect x="15.0" y="757" width="0.6" height="15.0" fill="rgb(240,162,38)" rx="2" ry="2" />
+<text  x="17.98" y="767.5" ></text>
+</g>
+<g >
+<title>kmalloc_reserve (82,925,368 samples, 0.80%)</title><rect x="847.5" y="421" width="9.5" height="15.0" fill="rgb(240,163,39)" rx="2" ry="2" />
+<text  x="850.54" y="431.5" ></text>
+</g>
+<g >
+<title>__gnu_cxx::__normal_iterator&lt;net::Channel**, std::vector&lt;net::Channel*, std::allocator&lt;net::Channel*&gt; &gt; &gt;::base (42,284,417 samples, 0.41%)</title><rect x="69.0" y="757" width="4.8" height="15.0" fill="rgb(239,159,38)" rx="2" ry="2" />
+<text  x="72.00" y="767.5" ></text>
+</g>
+<g >
+<title>malloc (42,713,802 samples, 0.41%)</title><rect x="1131.6" y="725" width="4.9" height="15.0" fill="rgb(230,119,28)" rx="2" ry="2" />
+<text  x="1134.58" y="735.5" ></text>
+</g>
+<g >
+<title>dequeue_entities (42,881,037 samples, 0.41%)</title><rect x="54.3" y="629" width="4.9" height="15.0" fill="rgb(241,166,39)" rx="2" ry="2" />
+<text  x="57.32" y="639.5" ></text>
+</g>
+<g >
+<title>select_task_rq_fair (42,290,108 samples, 0.41%)</title><rect x="634.9" y="69" width="4.9" height="15.0" fill="rgb(211,29,7)" rx="2" ry="2" />
+<text  x="637.94" y="79.5" ></text>
+</g>
+<g >
+<title>net::Socket* const&amp; std::__get_helper&lt;0ul, net::Socket*, std::default_delete&lt;net::Socket&gt; &gt; (52,707,187 samples, 0.51%)</title><rect x="274.8" y="565" width="6.0" height="15.0" fill="rgb(213,38,9)" rx="2" ry="2" />
+<text  x="277.76" y="575.5" ></text>
+</g>
+<g >
+<title>_raw_spin_lock_irq (42,146,870 samples, 0.41%)</title><rect x="771.3" y="245" width="4.8" height="15.0" fill="rgb(231,122,29)" rx="2" ry="2" />
+<text  x="774.33" y="255.5" ></text>
+</g>
+<g >
+<title>__netif_receive_skb_one_core (2,072,948,038 samples, 20.04%)</title><rect x="534.9" y="245" width="236.4" height="15.0" fill="rgb(215,47,11)" rx="2" ry="2" />
+<text  x="537.92" y="255.5" >__netif_receive_skb_one_core</text>
+</g>
+<g >
+<title>ip_local_deliver (1,730,260,471 samples, 16.72%)</title><rect x="534.9" y="229" width="197.4" height="15.0" fill="rgb(230,116,27)" rx="2" ry="2" />
+<text  x="537.92" y="239.5" >ip_local_deliver</text>
+</g>
+<g >
+<title>skb_page_frag_refill (41,838,481 samples, 0.40%)</title><rect x="823.5" y="437" width="4.8" height="15.0" fill="rgb(228,108,26)" rx="2" ry="2" />
+<text  x="826.54" y="447.5" ></text>
+</g>
+<g >
+<title>ipv4_get_l4proto (40,646,992 samples, 0.39%)</title><rect x="453.2" y="325" width="4.7" height="15.0" fill="rgb(242,170,40)" rx="2" ry="2" />
+<text  x="456.22" y="335.5" ></text>
+</g>
+<g >
+<title>server::KvServer::KvServer (6,852,221,739 samples, 66.23%)</title><rect x="309.9" y="597" width="781.5" height="15.0" fill="rgb(236,142,34)" rx="2" ry="2" />
+<text  x="312.92" y="607.5" >server::KvServer::KvServer</text>
+</g>
+<g >
+<title>do_syscall_64 (426,212,873 samples, 4.12%)</title><rect x="15.6" y="741" width="48.6" height="15.0" fill="rgb(209,20,4)" rx="2" ry="2" />
+<text  x="18.56" y="751.5" >do_s..</text>
+</g>
+<g >
+<title>std::enable_shared_from_this&lt;net::TcpConnection&gt;::shared_from_this (129,294,732 samples, 1.25%)</title><rect x="290.4" y="661" width="14.7" height="15.0" fill="rgb(241,167,40)" rx="2" ry="2" />
+<text  x="293.38" y="671.5" ></text>
+</g>
+<g >
+<title>net::Socket* const&amp; std::__get_helper&lt;0ul, net::Socket*, std::default_delete&lt;net::Socket&gt; &gt; (86,197,656 samples, 0.83%)</title><rect x="1165.7" y="741" width="9.8" height="15.0" fill="rgb(213,38,9)" rx="2" ry="2" />
+<text  x="1168.66" y="751.5" ></text>
+</g>
+<g >
+<title>std::shared_ptr&lt;net::TcpConnection&gt;::shared_ptr&lt;net::TcpConnection, void&gt; (129,294,732 samples, 1.25%)</title><rect x="290.4" y="645" width="14.7" height="15.0" fill="rgb(236,143,34)" rx="2" ry="2" />
+<text  x="293.38" y="655.5" ></text>
+</g>
+<g >
+<title>std::_Sp_counted_base&lt; (42,282,824 samples, 0.41%)</title><rect x="962.2" y="501" width="4.9" height="15.0" fill="rgb(211,31,7)" rx="2" ry="2" />
+<text  x="965.24" y="511.5" ></text>
+</g>
+<g >
+<title>_raw_spin_lock (41,401,671 samples, 0.40%)</title><rect x="776.1" y="277" width="4.8" height="15.0" fill="rgb(239,160,38)" rx="2" ry="2" />
+<text  x="779.14" y="287.5" ></text>
+</g>
+<g >
+<title>entry_SYSCALL_64 (5,050,505 samples, 0.05%)</title><rect x="112.2" y="661" width="0.5" height="15.0" fill="rgb(239,156,37)" rx="2" ry="2" />
+<text  x="115.15" y="671.5" ></text>
+</g>
+<g >
+<title>std::_Sp_counted_base&lt; (84,045,950 samples, 0.81%)</title><rect x="1096.9" y="613" width="9.6" height="15.0" fill="rgb(211,31,7)" rx="2" ry="2" />
+<text  x="1099.94" y="623.5" ></text>
+</g>
+<g >
+<title>std::_Hashtable&lt;int, std::pair&lt;int const, std::function&lt;protocol::Response  (42,248,934 samples, 0.41%)</title><rect x="1052.8" y="517" width="4.8" height="15.0" fill="rgb(224,88,21)" rx="2" ry="2" />
+<text  x="1055.79" y="527.5" ></text>
+</g>
+<g >
+<title>void std::__invoke_impl&lt;void, server::KvServer::KvServer (6,894,222,089 samples, 66.63%)</title><rect x="305.1" y="613" width="786.3" height="15.0" fill="rgb(249,204,48)" rx="2" ry="2" />
+<text  x="308.13" y="623.5" >void std::__invoke_impl&lt;void, server::KvServer::KvServer</text>
+</g>
+<g >
+<title>nft_meta_get_eval (42,226,315 samples, 0.41%)</title><rect x="727.4" y="165" width="4.9" height="15.0" fill="rgb(214,45,10)" rx="2" ry="2" />
+<text  x="730.44" y="175.5" ></text>
+</g>
+<g >
+<title>do_syscall_64 (4,899,192,405 samples, 47.35%)</title><rect x="322.1" y="533" width="558.7" height="15.0" fill="rgb(209,20,4)" rx="2" ry="2" />
+<text  x="325.05" y="543.5" >do_syscall_64</text>
+</g>
+<g >
+<title>nft_do_chain_ipv4 (126,392,953 samples, 1.22%)</title><rect x="756.9" y="197" width="14.4" height="15.0" fill="rgb(213,40,9)" rx="2" ry="2" />
+<text  x="759.92" y="207.5" ></text>
+</g>
+<g >
+<title>std::__shared_ptr&lt;void,  (42,548,724 samples, 0.41%)</title><rect x="1121.7" y="725" width="4.9" height="15.0" fill="rgb(217,56,13)" rx="2" ry="2" />
+<text  x="1124.74" y="735.5" ></text>
+</g>
+<g >
+<title>__local_bh_enable_ip (2,476,907,107 samples, 23.94%)</title><rect x="503.2" y="341" width="282.5" height="15.0" fill="rgb(237,147,35)" rx="2" ry="2" />
+<text  x="506.19" y="351.5" >__local_bh_enable_ip</text>
+</g>
+<g >
+<title>[libc.so.6] (1,464,779,268 samples, 14.16%)</title><rect x="88.1" y="677" width="167.1" height="15.0" fill="rgb(223,84,20)" rx="2" ry="2" />
+<text  x="91.13" y="687.5" >[libc.so.6]</text>
+</g>
+<g >
+<title>std::__detail::_Hashtable_base&lt;std::__cxx11::basic_string&lt;char, std::char_traits&lt;char&gt;, std::allocator&lt;char&gt; &gt;, std::pair&lt;std::__cxx11::basic_string&lt;char, std::char_traits&lt;char&gt;, std::allocator&lt;char&gt; &gt; const, std::__cxx11::basic_string&lt;char, std::char_traits&lt;char&gt;, std::allocator&lt;char&gt; &gt; &gt;, std::__detail::_Select1st, std::equal_to&lt;std::__cxx11::basic_string&lt;char, std::char_traits&lt;char&gt;, std::allocator&lt;char&gt; &gt; &gt;, std::hash&lt;std::__cxx11::basic_string&lt;char, std::char_traits&lt;char&gt;, std::allocator&lt;char&gt; &gt; &gt;, std::__detail::_Mod_range_hashing, std::__detail::_Default_ranged_hash, std::__detail::_Hashtable_traits&lt;true, false, true&gt; &gt;::_S_equals (32,186,270 samples, 0.31%)</title><rect x="1039.3" y="373" width="3.7" height="15.0" fill="rgb(251,212,50)" rx="2" ry="2" />
+<text  x="1042.31" y="383.5" ></text>
+</g>
+<g >
+<title>nf_nat_ipv4_out (41,299,094 samples, 0.40%)</title><rect x="789.9" y="357" width="4.7" height="15.0" fill="rgb(244,180,43)" rx="2" ry="2" />
+<text  x="792.87" y="367.5" ></text>
+</g>
+<g >
+<title>x64_sys_call (85,745,836 samples, 0.83%)</title><rect x="240.6" y="629" width="9.8" height="15.0" fill="rgb(247,194,46)" rx="2" ry="2" />
+<text  x="243.60" y="639.5" ></text>
+</g>
+<g >
+<title>nf_hook_slow (72,942,243 samples, 0.70%)</title><rect x="786.3" y="373" width="8.3" height="15.0" fill="rgb(243,175,42)" rx="2" ry="2" />
+<text  x="789.26" y="383.5" ></text>
+</g>
+<g >
+<title>[libc.so.6] (83,981,504 samples, 0.81%)</title><rect x="1024.9" y="325" width="9.6" height="15.0" fill="rgb(223,84,20)" rx="2" ry="2" />
+<text  x="1027.92" y="335.5" ></text>
+</g>
+<g >
+<title>std::_Function_base::_Base_manager&lt;server::KvServer::KvServer (41,868,352 samples, 0.40%)</title><rect x="1005.5" y="517" width="4.8" height="15.0" fill="rgb(217,59,14)" rx="2" ry="2" />
+<text  x="1008.49" y="527.5" ></text>
+</g>
+<g >
+<title>std::__shared_ptr&lt;spdlog::logger,  (85,870,205 samples, 0.83%)</title><rect x="906.3" y="517" width="9.8" height="15.0" fill="rgb(244,182,43)" rx="2" ry="2" />
+<text  x="909.31" y="527.5" ></text>
+</g>
+<g >
+<title>std::weak_ptr&lt;void&gt;::lock (42,548,724 samples, 0.41%)</title><rect x="1121.7" y="757" width="4.9" height="15.0" fill="rgb(227,103,24)" rx="2" ry="2" />
+<text  x="1124.74" y="767.5" ></text>
+</g>
+<g >
+<title>tcp_v4_rcv (1,325,052,798 samples, 12.81%)</title><rect x="558.9" y="181" width="151.1" height="15.0" fill="rgb(237,148,35)" rx="2" ry="2" />
+<text  x="561.91" y="191.5" >tcp_v4_rcv</text>
+</g>
+<g >
+<title>std::__cxx11::basic_string&lt;char, std::char_traits&lt;char&gt;, std::allocator&lt;char&gt; &gt;::_M_construct&lt;char const*&gt; (42,057,953 samples, 0.41%)</title><rect x="1000.7" y="533" width="4.8" height="15.0" fill="rgb(214,43,10)" rx="2" ry="2" />
+<text  x="1003.69" y="543.5" ></text>
+</g>
+<g >
+<title>std::_Function_base::_M_empty (86,757,076 samples, 0.84%)</title><rect x="952.3" y="533" width="9.9" height="15.0" fill="rgb(244,183,43)" rx="2" ry="2" />
+<text  x="955.35" y="543.5" ></text>
+</g>
+<g >
+<title>std::_Vector_base&lt;net::Channel*, std::allocator&lt;net::Channel*&gt; &gt;::_M_allocate (42,713,802 samples, 0.41%)</title><rect x="1131.6" y="741" width="4.9" height="15.0" fill="rgb(221,76,18)" rx="2" ry="2" />
+<text  x="1134.58" y="751.5" ></text>
+</g>
+<g >
+<title>__errno_location@plt (43,417,370 samples, 0.42%)</title><rect x="260.0" y="677" width="5.0" height="15.0" fill="rgb(249,204,48)" rx="2" ry="2" />
+<text  x="263.03" y="687.5" ></text>
+</g>
+<g >
+<title>std::_Hashtable&lt;std::__cxx11::basic_string&lt;char, std::char_traits&lt;char&gt;, std::allocator&lt;char&gt; &gt;, std::pair&lt;std::__cxx11::basic_string&lt;char, std::char_traits&lt;char&gt;, std::allocator&lt;char&gt; &gt; const, std::__cxx11::basic_string&lt;char, std::char_traits&lt;char&gt;, std::allocator&lt;char&gt; &gt; &gt;, std::allocator&lt;std::pair&lt;std::__cxx11::basic_string&lt;char, std::char_traits&lt;char&gt;, std::allocator&lt;char&gt; &gt; const, std::__cxx11::basic_string&lt;char, std::char_traits&lt;char&gt;, std::allocator&lt;char&gt; &gt; &gt; &gt;, std::__detail::_Select1st, std::equal_to&lt;std::__cxx11::basic_string&lt;char, std::char_traits&lt;char&gt;, std::allocator&lt;char&gt; &gt; &gt;, std::hash&lt;std::__cxx11::basic_string&lt;char, std::char_traits&lt;char&gt;, std::allocator&lt;char&gt; &gt; &gt;, std::__detail::_Mod_range_hashing, std::__detail::_Default_ranged_hash, std::__detail::_Prime_rehash_policy, std::__detail::_Hashtable_traits&lt;true, false, true&gt; &gt;::_M_bucket_index (42,062,820 samples, 0.41%)</title><rect x="1010.3" y="421" width="4.8" height="15.0" fill="rgb(214,44,10)" rx="2" ry="2" />
+<text  x="1013.26" y="431.5" ></text>
+</g>
+<g >
+<title>cubictcp_acked (43,683,741 samples, 0.42%)</title><rect x="667.4" y="117" width="5.0" height="15.0" fill="rgb(235,140,33)" rx="2" ry="2" />
+<text  x="670.39" y="127.5" ></text>
+</g>
+<g >
+<title>__wake_up_common (212,873,667 samples, 2.06%)</title><rect x="620.3" y="101" width="24.3" height="15.0" fill="rgb(248,197,47)" rx="2" ry="2" />
+<text  x="623.32" y="111.5" >_..</text>
+</g>
+<g >
+<title>std::__detail::_Node_iterator_base&lt;std::pair&lt;int const, std::function&lt;protocol::Response  (44,074,321 samples, 0.43%)</title><rect x="1057.6" y="517" width="5.0" height="15.0" fill="rgb(244,180,43)" rx="2" ry="2" />
+<text  x="1060.61" y="527.5" ></text>
+</g>
+<g >
+<title>tcp_queue_rcv (83,644,216 samples, 0.81%)</title><rect x="700.5" y="133" width="9.5" height="15.0" fill="rgb(239,156,37)" rx="2" ry="2" />
+<text  x="703.49" y="143.5" ></text>
+</g>
+<g >
+<title>__x64_sys_epoll_wait (426,212,873 samples, 4.12%)</title><rect x="15.6" y="725" width="48.6" height="15.0" fill="rgb(206,6,1)" rx="2" ry="2" />
+<text  x="18.56" y="735.5" >__x6..</text>
+</g>
+<g >
+<title>entry_SYSCALL_64_after_hwframe (4,899,192,405 samples, 47.35%)</title><rect x="322.1" y="549" width="558.7" height="15.0" fill="rgb(218,63,15)" rx="2" ry="2" />
+<text  x="325.05" y="559.5" >entry_SYSCALL_64_after_hwframe</text>
+</g>
+<g >
+<title>kfree_skbmem (42,264,739 samples, 0.41%)</title><rect x="780.9" y="277" width="4.8" height="15.0" fill="rgb(230,117,28)" rx="2" ry="2" />
+<text  x="783.86" y="287.5" ></text>
+</g>
+<g >
+<title>tcp_current_mss (47,300,476 samples, 0.46%)</title><rect x="828.3" y="437" width="5.4" height="15.0" fill="rgb(253,222,53)" rx="2" ry="2" />
+<text  x="831.31" y="447.5" ></text>
+</g>
+<g >
+<title>__rcu_read_unlock (42,131,764 samples, 0.41%)</title><rect x="473.1" y="373" width="4.8" height="15.0" fill="rgb(253,224,53)" rx="2" ry="2" />
+<text  x="476.12" y="383.5" ></text>
+</g>
+<g >
+<title>std::unique_ptr&lt;net::Socket, std::default_delete&lt;net::Socket&gt; &gt;::get (86,197,656 samples, 0.83%)</title><rect x="1165.7" y="789" width="9.8" height="15.0" fill="rgb(246,190,45)" rx="2" ry="2" />
+<text  x="1168.66" y="799.5" ></text>
+</g>
+<g >
+<title>__schedule (42,881,037 samples, 0.41%)</title><rect x="54.3" y="661" width="4.9" height="15.0" fill="rgb(227,103,24)" rx="2" ry="2" />
+<text  x="57.32" y="671.5" ></text>
+</g>
+<g >
+<title>update_process_times (43,783,999 samples, 0.42%)</title><rect x="751.9" y="85" width="5.0" height="15.0" fill="rgb(250,209,50)" rx="2" ry="2" />
+<text  x="754.93" y="95.5" ></text>
+</g>
+<g >
+<title>entry_SYSCALL_64_safe_stack (42,193,434 samples, 0.41%)</title><rect x="250.4" y="661" width="4.8" height="15.0" fill="rgb(231,120,28)" rx="2" ry="2" />
+<text  x="253.38" y="671.5" ></text>
+</g>
+<g >
+<title>std::__shared_count&lt; (42,548,724 samples, 0.41%)</title><rect x="1121.7" y="709" width="4.9" height="15.0" fill="rgb(248,201,48)" rx="2" ry="2" />
+<text  x="1124.74" y="719.5" ></text>
+</g>
+<g >
+<title>bool __gnu_cxx::operator!=&lt;net::Channel**, std::vector&lt;net::Channel*, std::allocator&lt;net::Channel*&gt; &gt; &gt; (42,284,417 samples, 0.41%)</title><rect x="69.0" y="773" width="4.8" height="15.0" fill="rgb(235,142,34)" rx="2" ry="2" />
+<text  x="72.00" y="783.5" ></text>
+</g>
+<g >
+<title>mem_cgroup_uncharge_skmem (128,193,589 samples, 1.24%)</title><rect x="163.2" y="517" width="14.6" height="15.0" fill="rgb(220,72,17)" rx="2" ry="2" />
+<text  x="166.18" y="527.5" ></text>
+</g>
+<g >
+<title>operator delete (42,001,870 samples, 0.41%)</title><rect x="309.9" y="581" width="4.8" height="15.0" fill="rgb(247,196,46)" rx="2" ry="2" />
+<text  x="312.92" y="591.5" ></text>
+</g>
+<g >
+<title>ep_item_poll.isra.0 (255,175,901 samples, 2.47%)</title><rect x="20.4" y="693" width="29.1" height="15.0" fill="rgb(251,213,51)" rx="2" ry="2" />
+<text  x="23.36" y="703.5" >ep..</text>
+</g>
+<g >
+<title>void std::call_once&lt;void  (138,274,083 samples, 1.34%)</title><rect x="890.5" y="517" width="15.8" height="15.0" fill="rgb(222,82,19)" rx="2" ry="2" />
+<text  x="893.54" y="527.5" ></text>
+</g>
+<g >
+<title>spdlog::source_loc::source_loc (41,871,978 samples, 0.40%)</title><rect x="280.8" y="661" width="4.7" height="15.0" fill="rgb(248,198,47)" rx="2" ry="2" />
+<text  x="283.77" y="671.5" ></text>
+</g>
+<g >
+<title>pthread_mutex_lock (43,721,403 samples, 0.42%)</title><rect x="1136.5" y="725" width="4.9" height="15.0" fill="rgb(247,196,46)" rx="2" ry="2" />
+<text  x="1139.45" y="735.5" ></text>
+</g>
+<g >
+<title>kmem_cache_alloc_node_noprof (82,925,368 samples, 0.80%)</title><rect x="847.5" y="405" width="9.5" height="15.0" fill="rgb(208,17,4)" rx="2" ry="2" />
+<text  x="850.54" y="415.5" ></text>
+</g>
+<g >
+<title>std::function&lt;protocol::Response  (372,494,657 samples, 3.60%)</title><rect x="1005.5" y="549" width="42.5" height="15.0" fill="rgb(243,175,41)" rx="2" ry="2" />
+<text  x="1008.49" y="559.5" >std:..</text>
+</g>
+<g >
+<title>bool std::operator==&lt;char, std::char_traits&lt;char&gt;, std::allocator&lt;char&gt; &gt; (126,197,410 samples, 1.22%)</title><rect x="1024.9" y="341" width="14.4" height="15.0" fill="rgb(227,102,24)" rx="2" ry="2" />
+<text  x="1027.92" y="351.5" ></text>
+</g>
+<g >
+<title>__alloc_skb (204,112,312 samples, 1.97%)</title><rect x="838.5" y="437" width="23.3" height="15.0" fill="rgb(226,100,23)" rx="2" ry="2" />
+<text  x="841.54" y="447.5" >_..</text>
+</g>
+<g >
+<title>nf_conntrack_tcp_packet (42,404,491 samples, 0.41%)</title><rect x="457.9" y="325" width="4.8" height="15.0" fill="rgb(237,147,35)" rx="2" ry="2" />
+<text  x="460.86" y="335.5" ></text>
+</g>
+<g >
+<title>tcp_send_mss (47,300,476 samples, 0.46%)</title><rect x="828.3" y="453" width="5.4" height="15.0" fill="rgb(231,124,29)" rx="2" ry="2" />
+<text  x="831.31" y="463.5" ></text>
+</g>
+<g >
+<title>__smp_call_single_queue (42,356,173 samples, 0.41%)</title><rect x="639.8" y="53" width="4.8" height="15.0" fill="rgb(219,66,15)" rx="2" ry="2" />
+<text  x="642.77" y="63.5" ></text>
+</g>
+<g >
+<title>std::_Vector_base&lt;net::Channel*, std::allocator&lt;net::Channel*&gt; &gt;::~_Vector_base (42,278,479 samples, 0.41%)</title><rect x="1156.0" y="725" width="4.8" height="15.0" fill="rgb(206,7,1)" rx="2" ry="2" />
+<text  x="1159.02" y="735.5" ></text>
+</g>
+<g >
+<title>std::_Hashtable&lt;int, std::pair&lt;int const, std::function&lt;protocol::Response  (128,611,669 samples, 1.24%)</title><rect x="1048.0" y="533" width="14.6" height="15.0" fill="rgb(224,88,21)" rx="2" ry="2" />
+<text  x="1050.97" y="543.5" ></text>
+</g>
+<g >
+<title>std::lock_guard&lt;std::mutex&gt;::~lock_guard (41,911,598 samples, 0.41%)</title><rect x="1146.3" y="773" width="4.7" height="15.0" fill="rgb(221,75,18)" rx="2" ry="2" />
+<text  x="1149.27" y="783.5" ></text>
+</g>
+<g >
+<title>std::_Sp_counted_base&lt; (42,548,724 samples, 0.41%)</title><rect x="1121.7" y="677" width="4.9" height="15.0" fill="rgb(211,31,7)" rx="2" ry="2" />
+<text  x="1124.74" y="687.5" ></text>
+</g>
+<g >
+<title>syscall_return_via_sysret (43,058,018 samples, 0.42%)</title><rect x="880.8" y="549" width="4.9" height="15.0" fill="rgb(229,113,27)" rx="2" ry="2" />
+<text  x="883.80" y="559.5" ></text>
+</g>
+<g >
+<title>std::mutex::lock (43,721,403 samples, 0.42%)</title><rect x="1136.5" y="741" width="4.9" height="15.0" fill="rgb(244,180,43)" rx="2" ry="2" />
+<text  x="1139.45" y="751.5" ></text>
+</g>
+<g >
+<title>llist_add_batch (42,356,173 samples, 0.41%)</title><rect x="639.8" y="37" width="4.8" height="15.0" fill="rgb(231,121,28)" rx="2" ry="2" />
+<text  x="642.77" y="47.5" ></text>
+</g>
+<g >
+<title>dequeue_entity (42,881,037 samples, 0.41%)</title><rect x="54.3" y="613" width="4.9" height="15.0" fill="rgb(233,130,31)" rx="2" ry="2" />
+<text  x="57.32" y="623.5" ></text>
+</g>
+<g >
+<title>std::_Tuple_impl&lt;0ul, net::Socket*, std::default_delete&lt;net::Socket&gt; &gt;::_M_head (86,197,656 samples, 0.83%)</title><rect x="1165.7" y="725" width="9.8" height="15.0" fill="rgb(218,63,15)" rx="2" ry="2" />
+<text  x="1168.66" y="735.5" ></text>
+</g>
+<g >
+<title>__sk_mem_reduce_allocated (128,193,589 samples, 1.24%)</title><rect x="163.2" y="533" width="14.6" height="15.0" fill="rgb(214,44,10)" rx="2" ry="2" />
+<text  x="166.18" y="543.5" ></text>
+</g>
+<g >
+<title>server::KvServer::KvServer (330,626,305 samples, 3.20%)</title><rect x="1010.3" y="485" width="37.7" height="15.0" fill="rgb(236,142,34)" rx="2" ry="2" />
+<text  x="1013.26" y="495.5" >ser..</text>
+</g>
+<g >
+<title>__gthread_active_p (86,273,454 samples, 0.83%)</title><rect x="890.5" y="501" width="9.9" height="15.0" fill="rgb(228,109,26)" rx="2" ry="2" />
+<text  x="893.54" y="511.5" ></text>
+</g>
+<g >
+<title>net::Socket::fd (43,422,409 samples, 0.42%)</title><rect x="265.0" y="645" width="4.9" height="15.0" fill="rgb(211,31,7)" rx="2" ry="2" />
+<text  x="267.98" y="655.5" ></text>
+</g>
+<g >
+<title>inet_recvmsg (825,033,528 samples, 7.97%)</title><rect x="131.9" y="581" width="94.1" height="15.0" fill="rgb(206,5,1)" rx="2" ry="2" />
+<text  x="134.93" y="591.5" >inet_recvmsg</text>
+</g>
+<g >
+<title>std::function&lt;void  (42,394,777 samples, 0.41%)</title><rect x="1107.1" y="677" width="4.8" height="15.0" fill="rgb(207,13,3)" rx="2" ry="2" />
+<text  x="1110.10" y="687.5" ></text>
+</g>
+<g >
+<title>ip_protocol_deliver_rcu (1,451,682,759 samples, 14.03%)</title><rect x="544.5" y="197" width="165.5" height="15.0" fill="rgb(215,49,11)" rx="2" ry="2" />
+<text  x="547.46" y="207.5" >ip_protocol_deliver_rcu</text>
+</g>
+<g >
+<title>ip_local_out (522,803,408 samples, 5.05%)</title><rect x="412.9" y="389" width="59.6" height="15.0" fill="rgb(233,131,31)" rx="2" ry="2" />
+<text  x="415.91" y="399.5" >ip_loc..</text>
+</g>
+<g >
+<title>raw_local_deliver (84,681,437 samples, 0.82%)</title><rect x="549.2" y="181" width="9.7" height="15.0" fill="rgb(250,208,49)" rx="2" ry="2" />
+<text  x="552.25" y="191.5" ></text>
+</g>
+<g >
+<title>hrtimer_interrupt (43,783,999 samples, 0.42%)</title><rect x="751.9" y="133" width="5.0" height="15.0" fill="rgb(228,109,26)" rx="2" ry="2" />
+<text  x="754.93" y="143.5" ></text>
+</g>
+<g >
+<title>_copy_to_iter (83,358,418 samples, 0.81%)</title><rect x="182.7" y="501" width="9.5" height="15.0" fill="rgb(227,105,25)" rx="2" ry="2" />
+<text  x="185.68" y="511.5" ></text>
+</g>
+<g >
+<title>pthread_once (9,801,810 samples, 0.09%)</title><rect x="900.4" y="501" width="1.1" height="15.0" fill="rgb(224,87,20)" rx="2" ry="2" />
+<text  x="903.38" y="511.5" ></text>
+</g>
+<g >
+<title>std::lock_guard&lt;std::mutex&gt;::lock_guard (43,721,403 samples, 0.42%)</title><rect x="1136.5" y="757" width="4.9" height="15.0" fill="rgb(235,139,33)" rx="2" ry="2" />
+<text  x="1139.45" y="767.5" ></text>
+</g>
+<g >
+<title>tick_nohz_handler (43,783,999 samples, 0.42%)</title><rect x="751.9" y="101" width="5.0" height="15.0" fill="rgb(248,200,48)" rx="2" ry="2" />
+<text  x="754.93" y="111.5" ></text>
+</g>
+<g >
+<title>protocol::Response std::__invoke_impl&lt;protocol::Response, server::KvServer::KvServer (330,626,305 samples, 3.20%)</title><rect x="1010.3" y="501" width="37.7" height="15.0" fill="rgb(219,67,16)" rx="2" ry="2" />
+<text  x="1013.26" y="511.5" >pro..</text>
+</g>
+<g >
+<title>sock_poll (170,970,539 samples, 1.65%)</title><rect x="30.0" y="677" width="19.5" height="15.0" fill="rgb(223,84,20)" rx="2" ry="2" />
+<text  x="32.97" y="687.5" ></text>
+</g>
+<g >
+<title>nf_nat_ipv4_local_in (21,470,668 samples, 0.21%)</title><rect x="710.6" y="197" width="2.5" height="15.0" fill="rgb(235,139,33)" rx="2" ry="2" />
+<text  x="713.60" y="207.5" ></text>
+</g>
+<g >
+<title>ktime_get_ts64 (43,476,447 samples, 0.42%)</title><rect x="59.2" y="709" width="5.0" height="15.0" fill="rgb(216,53,12)" rx="2" ry="2" />
+<text  x="62.21" y="719.5" ></text>
+</g>
+<g >
+<title>nf_hook_slow (390,612,125 samples, 3.78%)</title><rect x="428.0" y="357" width="44.5" height="15.0" fill="rgb(243,175,42)" rx="2" ry="2" />
+<text  x="430.99" y="367.5" >nf_h..</text>
+</g>
+<g >
+<title>std::shared_ptr&lt;spdlog::logger&gt;::shared_ptr (85,870,205 samples, 0.83%)</title><rect x="906.3" y="533" width="9.8" height="15.0" fill="rgb(214,41,9)" rx="2" ry="2" />
+<text  x="909.31" y="543.5" ></text>
+</g>
+<g >
+<title>read_tsc (43,476,447 samples, 0.42%)</title><rect x="59.2" y="693" width="5.0" height="15.0" fill="rgb(206,7,1)" rx="2" ry="2" />
+<text  x="62.21" y="703.5" ></text>
+</g>
+<g >
+<title>ip_rcv_finish_core.isra.0 (42,162,297 samples, 0.41%)</title><rect x="742.2" y="213" width="4.8" height="15.0" fill="rgb(207,12,2)" rx="2" ry="2" />
+<text  x="745.15" y="223.5" ></text>
+</g>
+<g >
+<title>ttwu_queue_wakelist (42,356,173 samples, 0.41%)</title><rect x="639.8" y="69" width="4.8" height="15.0" fill="rgb(209,19,4)" rx="2" ry="2" />
+<text  x="642.77" y="79.5" ></text>
+</g>
+<g >
+<title>__virt_addr_valid (83,462,651 samples, 0.81%)</title><rect x="361.0" y="437" width="9.6" height="15.0" fill="rgb(216,53,12)" rx="2" ry="2" />
+<text  x="364.03" y="447.5" ></text>
+</g>
+<g >
+<title>operator delete (42,278,479 samples, 0.41%)</title><rect x="1156.0" y="693" width="4.8" height="15.0" fill="rgb(247,196,46)" rx="2" ry="2" />
+<text  x="1159.02" y="703.5" ></text>
+</g>
+<g >
+<title>tcp_sendmsg_locked (4,517,807,793 samples, 43.67%)</title><rect x="346.6" y="469" width="515.2" height="15.0" fill="rgb(215,48,11)" rx="2" ry="2" />
+<text  x="349.56" y="479.5" >tcp_sendmsg_locked</text>
+</g>
+<g >
+<title>std::function&lt;void  (8,976,850,600 samples, 86.76%)</title><rect x="88.1" y="757" width="1023.8" height="15.0" fill="rgb(207,13,3)" rx="2" ry="2" />
+<text  x="91.13" y="767.5" >std::function&lt;void </text>
+</g>
+<g >
+<title>std::char_traits&lt;char&gt;::compare (42,215,906 samples, 0.41%)</title><rect x="1034.5" y="325" width="4.8" height="15.0" fill="rgb(243,176,42)" rx="2" ry="2" />
+<text  x="1037.50" y="335.5" ></text>
+</g>
+<g >
+<title>std::vector&lt;net::Channel*, std::allocator&lt;net::Channel*&gt; &gt;::operator= (85,932,598 samples, 0.83%)</title><rect x="1151.0" y="773" width="9.8" height="15.0" fill="rgb(226,96,23)" rx="2" ry="2" />
+<text  x="1154.05" y="783.5" ></text>
+</g>
+<g >
+<title>schedule_hrtimeout_range_clock (42,881,037 samples, 0.41%)</title><rect x="54.3" y="693" width="4.9" height="15.0" fill="rgb(222,81,19)" rx="2" ry="2" />
+<text  x="57.32" y="703.5" ></text>
+</g>
+<g >
+<title>std::shared_ptr&lt;void&gt;::shared_ptr (42,548,724 samples, 0.41%)</title><rect x="1121.7" y="741" width="4.9" height="15.0" fill="rgb(236,145,34)" rx="2" ry="2" />
+<text  x="1124.74" y="751.5" ></text>
+</g>
+<g >
+<title>_raw_spin_lock_bh (84,384,704 samples, 0.82%)</title><rect x="336.9" y="453" width="9.7" height="15.0" fill="rgb(221,75,18)" rx="2" ry="2" />
+<text  x="339.94" y="463.5" ></text>
+</g>
+<g >
+<title>std::_Hashtable&lt;std::__cxx11::basic_string&lt;char, std::char_traits&lt;char&gt;, std::allocator&lt;char&gt; &gt;, std::pair&lt;std::__cxx11::basic_string&lt;char, std::char_traits&lt;char&gt;, std::allocator&lt;char&gt; &gt; const, std::__cxx11::basic_string&lt;char, std::char_traits&lt;char&gt;, std::allocator&lt;char&gt; &gt; &gt;, std::allocator&lt;std::pair&lt;std::__cxx11::basic_string&lt;char, std::char_traits&lt;char&gt;, std::allocator&lt;char&gt; &gt; const, std::__cxx11::basic_string&lt;char, std::char_traits&lt;char&gt;, std::allocator&lt;char&gt; &gt; &gt; &gt;, std::__detail::_Select1st, std::equal_to&lt;std::__cxx11::basic_string&lt;char, std::char_traits&lt;char&gt;, std::allocator&lt;char&gt; &gt; &gt;, std::hash&lt;std::__cxx11::basic_string&lt;char, std::char_traits&lt;char&gt;, std::allocator&lt;char&gt; &gt; &gt;, std::__detail::_Mod_range_hashing, std::__detail::_Default_ranged_hash, std::__detail::_Prime_rehash_policy, std::__detail::_Hashtable_traits&lt;true, false, true&gt; &gt;::find (286,901,360 samples, 2.77%)</title><rect x="1010.3" y="437" width="32.7" height="15.0" fill="rgb(243,175,42)" rx="2" ry="2" />
+<text  x="1013.26" y="447.5" >st..</text>
+</g>
+<g >
+<title>void std::_Destroy&lt;std::function&lt;void  (42,335,646 samples, 0.41%)</title><rect x="1141.4" y="741" width="4.9" height="15.0" fill="rgb(239,159,38)" rx="2" ry="2" />
+<text  x="1144.44" y="751.5" ></text>
+</g>
+<g >
+<title>dequeue_task_fair (42,881,037 samples, 0.41%)</title><rect x="54.3" y="645" width="4.9" height="15.0" fill="rgb(230,119,28)" rx="2" ry="2" />
+<text  x="57.32" y="655.5" ></text>
+</g>
+<g >
+<title>net_rx_action (2,391,008,961 samples, 23.11%)</title><rect x="513.0" y="293" width="272.7" height="15.0" fill="rgb(240,164,39)" rx="2" ry="2" />
+<text  x="515.99" y="303.5" >net_rx_action</text>
+</g>
+<g >
+<title>release_sock (84,384,704 samples, 0.82%)</title><rect x="336.9" y="469" width="9.7" height="15.0" fill="rgb(248,198,47)" rx="2" ry="2" />
+<text  x="339.94" y="479.5" ></text>
+</g>
+<g >
+<title>std::__detail::_Hashtable_base&lt;std::__cxx11::basic_string&lt;char, std::char_traits&lt;char&gt;, std::allocator&lt;char&gt; &gt;, std::pair&lt;std::__cxx11::basic_string&lt;char, std::char_traits&lt;char&gt;, std::allocator&lt;char&gt; &gt; const, std::__cxx11::basic_string&lt;char, std::char_traits&lt;char&gt;, std::allocator&lt;char&gt; &gt; &gt;, std::__detail::_Select1st, std::equal_to&lt;std::__cxx11::basic_string&lt;char, std::char_traits&lt;char&gt;, std::allocator&lt;char&gt; &gt; &gt;, std::hash&lt;std::__cxx11::basic_string&lt;char, std::char_traits&lt;char&gt;, std::allocator&lt;char&gt; &gt; &gt;, std::__detail::_Mod_range_hashing, std::__detail::_Default_ranged_hash, std::__detail::_Hashtable_traits&lt;true, false, true&gt; &gt;::_M_key_equals (126,197,410 samples, 1.22%)</title><rect x="1024.9" y="373" width="14.4" height="15.0" fill="rgb(250,211,50)" rx="2" ry="2" />
+<text  x="1027.92" y="383.5" ></text>
+</g>
+<g >
+<title>net::TcpConnection::send (797,872,395 samples, 7.71%)</title><rect x="885.7" y="565" width="91.0" height="15.0" fill="rgb(226,99,23)" rx="2" ry="2" />
+<text  x="888.71" y="575.5" >net::TcpCo..</text>
+</g>
+<g >
+<title>kmem_cache_alloc_node_noprof (42,255,105 samples, 0.41%)</title><rect x="857.0" y="421" width="4.8" height="15.0" fill="rgb(208,17,4)" rx="2" ry="2" />
+<text  x="859.99" y="431.5" ></text>
+</g>
+<g >
+<title>[libc.so.6] (127,229,641 samples, 1.23%)</title><rect x="916.1" y="549" width="14.5" height="15.0" fill="rgb(223,84,20)" rx="2" ry="2" />
+<text  x="919.10" y="559.5" ></text>
+</g>
+<g >
+<title>std::_Function_handler&lt;void  (6,894,222,089 samples, 66.63%)</title><rect x="305.1" y="645" width="786.3" height="15.0" fill="rgb(245,187,44)" rx="2" ry="2" />
+<text  x="308.13" y="655.5" >std::_Function_handler&lt;void </text>
+</g>
+<g >
+<title>__sys_sendto (4,732,720,858 samples, 45.74%)</title><rect x="322.1" y="501" width="539.7" height="15.0" fill="rgb(236,146,34)" rx="2" ry="2" />
+<text  x="325.05" y="511.5" >__sys_sendto</text>
+</g>
+<g >
+<title>std::__cxx11::basic_string&lt;char, std::char_traits&lt;char&gt;, std::allocator&lt;char&gt; &gt;::append (44,341,577 samples, 0.43%)</title><rect x="1062.6" y="565" width="5.1" height="15.0" fill="rgb(247,193,46)" rx="2" ry="2" />
+<text  x="1065.64" y="575.5" ></text>
+</g>
+<g >
+<title>std::unordered_map&lt;std::__cxx11::basic_string&lt;char, std::char_traits&lt;char&gt;, std::allocator&lt;char&gt; &gt;, std::__cxx11::basic_string&lt;char, std::char_traits&lt;char&gt;, std::allocator&lt;char&gt; &gt;, std::hash&lt;std::__cxx11::basic_string&lt;char, std::char_traits&lt;char&gt;, std::allocator&lt;char&gt; &gt; &gt;, std::equal_to&lt;std::__cxx11::basic_string&lt;char, std::char_traits&lt;char&gt;, std::allocator&lt;char&gt; &gt; &gt;, std::allocator&lt;std::pair&lt;std::__cxx11::basic_string&lt;char, std::char_traits&lt;char&gt;, std::allocator&lt;char&gt; &gt; const, std::__cxx11::basic_string&lt;char, std::char_traits&lt;char&gt;, std::allocator&lt;char&gt; &gt; &gt; &gt; &gt;::find (330,626,305 samples, 3.20%)</title><rect x="1010.3" y="453" width="37.7" height="15.0" fill="rgb(231,121,29)" rx="2" ry="2" />
+<text  x="1013.26" y="463.5" >std..</text>
+</g>
+<g >
+<title>__inet_lookup_established (174,467,852 samples, 1.69%)</title><rect x="564.8" y="165" width="19.9" height="15.0" fill="rgb(222,79,19)" rx="2" ry="2" />
+<text  x="567.79" y="175.5" ></text>
+</g>
+<g >
+<title>lock_sock_nested (79,283,566 samples, 0.77%)</title><rect x="141.7" y="549" width="9.1" height="15.0" fill="rgb(246,190,45)" rx="2" ry="2" />
+<text  x="144.72" y="559.5" ></text>
+</g>
+<g >
+<title>__kfree_skb (114,666,391 samples, 1.11%)</title><rect x="654.3" y="117" width="13.1" height="15.0" fill="rgb(213,40,9)" rx="2" ry="2" />
+<text  x="657.31" y="127.5" ></text>
+</g>
+<g >
+<title>std::equal_to&lt;std::__cxx11::basic_string&lt;char, std::char_traits&lt;char&gt;, std::allocator&lt;char&gt; &gt; &gt;::operator (126,197,410 samples, 1.22%)</title><rect x="1024.9" y="357" width="14.4" height="15.0" fill="rgb(245,188,45)" rx="2" ry="2" />
+<text  x="1027.92" y="367.5" ></text>
+</g>
+<g >
+<title>bpf_skops_write_hdr_opt.isra.0 (41,867,860 samples, 0.40%)</title><rect x="794.6" y="405" width="4.8" height="15.0" fill="rgb(207,12,3)" rx="2" ry="2" />
+<text  x="797.58" y="415.5" ></text>
+</g>
+<g >
+<title>sched_tick (43,783,999 samples, 0.42%)</title><rect x="751.9" y="69" width="5.0" height="15.0" fill="rgb(238,155,37)" rx="2" ry="2" />
+<text  x="754.93" y="79.5" ></text>
+</g>
+<g >
+<title>server::KvServer::onMessage (86,197,656 samples, 0.83%)</title><rect x="1165.7" y="709" width="9.8" height="15.0" fill="rgb(251,213,50)" rx="2" ry="2" />
+<text  x="1168.66" y="719.5" ></text>
+</g>
+<g >
+<title>memset_orig (42,255,105 samples, 0.41%)</title><rect x="857.0" y="405" width="4.8" height="15.0" fill="rgb(247,194,46)" rx="2" ry="2" />
+<text  x="859.99" y="415.5" ></text>
+</g>
+<g >
+<title>__mod_timer (41,969,744 samples, 0.41%)</title><rect x="818.8" y="389" width="4.7" height="15.0" fill="rgb(234,136,32)" rx="2" ry="2" />
+<text  x="821.75" y="399.5" ></text>
+</g>
+<g >
+<title>net::EventLoop::loop (10,047,102,970 samples, 97.11%)</title><rect x="15.0" y="789" width="1145.8" height="15.0" fill="rgb(228,107,25)" rx="2" ry="2" />
+<text  x="17.98" y="799.5" >net::EventLoop::loop</text>
+</g>
+<g >
+<title>nf_conntrack_in (390,612,125 samples, 3.78%)</title><rect x="428.0" y="341" width="44.5" height="15.0" fill="rgb(206,8,2)" rx="2" ry="2" />
+<text  x="430.99" y="351.5" >nf_c..</text>
+</g>
+</g>
+</svg>

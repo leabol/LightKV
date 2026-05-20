@@ -23,6 +23,7 @@ add_library(net STATIC
     src/protocol/codec.cpp
     src/server/kv_server.cpp
     src/net/EventLoopThread.cpp
+    src/net/EventLoopThreadPoll.cpp
 )
 
 target_include_directories(net

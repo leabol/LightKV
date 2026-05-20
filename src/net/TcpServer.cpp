@@ -3,6 +3,7 @@
 #include "Acceptor.hpp"
 #include "EventLoop.hpp"
 #include "EventLoopThread.hpp"
+#include "EventLoopThreadPool.hpp"
 #include "InetAddress.hpp"
 #include "Log.hpp"
 #include "TcpConnection.hpp"
@@ -11,26 +12,36 @@
 namespace net {
 
 TcpServer::TcpServer(EventLoop* loop, const InetAddress& listenAddr)
-    : loop_(loop), acceptor_(loop, listenAddr) {
-    acceptor_.setNewConnectionCallback([this](int fd, const InetAddress& peer) {
-        (void) peer;  // 当前未使用对端地址，未来可用于日志
-        this->newConnection(fd, peer);
-    });
-}
+    : loop_(loop)
+    , acceptor_(loop, listenAddr)
+    , threadPools_(std::make_shared<EventLoopThreadPool>(loop))
+    {
+        acceptor_.setNewConnectionCallback([this](int fd, const InetAddress& peer) {
+            (void) peer;  // 当前未使用对端地址，未来可用于日志
+            this->newConnection(fd, peer);
+        });
+    }
 
 TcpServer::~TcpServer() {
+    loop_->assertInLoopThread();
+    LOG_TRACE("~TcpServer");
+
     for (auto& item : connections_) {
         auto& conn = item.second;
-        conn->forceClose();
+        conn->getLoop()->runInLoop([conn]{
+            conn->forceClose();
+        });
     }
     connections_.clear();
 }
 
 void TcpServer::start() {
-    thread_ = std::make_unique<EventLoopThread>();
-    thread_->startLoop();
-    // Start accepting on the provided loop (no extra thread by default)
-    loop_->runInLoop([this]() { acceptor_.listen(); });
+    threadPools_->start(ThreadInitCallback_);
+
+    assert(!acceptor_.listening());
+    loop_->runInLoop([this]{
+        acceptor_.listen(); 
+    });
     LOG_INFO("TcpServer listening started");
 }
 
