@@ -1,5 +1,6 @@
 #include "EventLoopThread.hpp"
 #include "EventLoop.hpp"
+#include <assert.h>
 
 namespace net{
 
@@ -25,6 +26,7 @@ EventLoop* EventLoopThread::startLoop(){
         cond_.wait(lock, [this]{return loop_ != nullptr;});
      }
      loop = loop_;
+     assert(loop);
      return loop;
 }
 

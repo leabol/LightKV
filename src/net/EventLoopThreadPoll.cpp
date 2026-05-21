@@ -22,7 +22,7 @@ void EventLoopThreadPool::start(const ThreadInitCallback& cb){
     start_ = true;
 
     for (int i = 0; i < numThreads_; i++){
-        auto t = std::make_unique<EventLoopThread>();
+        auto t = std::make_unique<EventLoopThread>(cb);
         loops_.push_back(t->startLoop());
         threads_.push_back(std::move(t));
     }
@@ -37,10 +37,10 @@ EventLoop* EventLoopThreadPool::getNextLoop(){
     EventLoop *loop = baseLoop_;
 
     if (!loops_.empty()){
-        loop = loops_[next_++];
-        if (next_ > loops_.size()){
+        if (next_ >= loops_.size()){
             next_ = 0;
         }
+        loop = loops_[next_++];
     }
     return loop;
 }

@@ -28,6 +28,7 @@ EventLoop::EventLoop()
     {
         wakeupChannel_->setReadCallback([this]() { this->handelWakeup(); });
         wakeupChannel_->enableReading();
+        LOG_TRACE("EventLoop is created");
     }
 
 EventLoop::~EventLoop(){

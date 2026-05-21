@@ -15,6 +15,7 @@ int main(int argc, char** argv) {
 	net::InetAddress listenAddr(port);
 
 	server::KvServer srv(&loop, listenAddr);
+	srv.setThreadNum(8);
 	srv.start();
 
 	loop.loop();

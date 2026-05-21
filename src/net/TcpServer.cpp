@@ -45,12 +45,17 @@ void TcpServer::start() {
     LOG_INFO("TcpServer listening started");
 }
 
+void TcpServer::setThreadNum(int numThreads){
+    assert(numThreads >= 0);
+    threadPools_->setThreadNum(numThreads);
+}
 
 void TcpServer::newConnection(int sockfd, const InetAddress& peer) {
     (void) peer; 
     loop_->assertInLoopThread();
+    EventLoop* ioLoop = threadPools_->getNextLoop();
     // 设置 conn 的 ioloop
-    auto conn = std::make_shared<TcpConnection>(loop_, sockfd);
+    auto conn = std::make_shared<TcpConnection>(ioLoop, sockfd);
     if (connectionCallback_) {
         conn->setConnectionCallback(connectionCallback_);
     }
@@ -67,7 +72,7 @@ void TcpServer::newConnection(int sockfd, const InetAddress& peer) {
         this->removeConnection(c);
     });
     connections_.emplace(sockfd, conn);
-    loop_->runInLoop([conn](){
+    ioLoop->runInLoop([conn](){
         conn->connectEstablished();  // 让channel绑定自己,并通知链接建立
     });
     LOG_INFO("new connection fd={} established (total={})", sockfd, connections_.size());

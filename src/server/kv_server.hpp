@@ -5,6 +5,7 @@
 #include "buffer.hpp"
 #include "request.hpp"
 #include "response.hpp"
+#include <mutex>
 #include <netinet/tcp.h>
 #include <unordered_map>
 #include <string>
@@ -22,12 +23,13 @@ public:
   void start();
 
   void onMessage(const net::TcpServer::TcpConnectionPtr& conn, net::Buffer& inputBuffer);
-
+  void setThreadNum(int numThreads);
 private:
   Response handleGET(const Request& req, Storage& storage);
   Response handleSET(const Request& req, Storage& storage);
   Response handleDEL(const Request& req, Storage& storage);
 
+  std::mutex storageMutex_;
   Storage storage_;
   net::TcpServer server_;
   Dispatcher dispatcher_;

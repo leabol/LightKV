@@ -2,6 +2,7 @@
 
 #include "codec.hpp"
 #include "parser.hpp"
+#include <mutex>
 
 namespace server {
 
@@ -17,6 +18,9 @@ KvServer::KvServer(net::EventLoop *loop, const net::InetAddress &listenAddr)
                               [this](const Request &req, Storage &s) { return this->handleDEL(req, s); });
 }
 
+void KvServer::setThreadNum(int numThreads){
+  server_.setThreadNum(numThreads);
+}
 void KvServer::start() { server_.start(); }
 
 void KvServer::onMessage(const net::TcpServer::TcpConnectionPtr &conn, net::Buffer &inputBuffer) {
@@ -30,6 +34,7 @@ void KvServer::onMessage(const net::TcpServer::TcpConnectionPtr &conn, net::Buff
 }
 
 Response KvServer::handleGET(const Request &req, Storage &storage) {
+  std::lock_guard lock(storageMutex_);
   auto it = storage.find(req.key);
   if (it == storage.end()) {
     return {false, "not found key"};
@@ -38,11 +43,13 @@ Response KvServer::handleGET(const Request &req, Storage &storage) {
 }
 
 Response KvServer::handleSET(const Request &req, Storage &storage) {
+  std::lock_guard lock(storageMutex_);
   storage[req.key] = req.value;
   return {true, "ok"};
 }
 
 Response KvServer::handleDEL(const Request &req, Storage &storage) {
+  std::lock_guard lock(storageMutex_);
   auto it = storage.find(req.key);
   if (it == storage.end()) {
     return {false, "not found key"};

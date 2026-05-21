@@ -30,6 +30,8 @@ class TcpServer {
     TcpServer(const TcpServer&)            = delete;
     TcpServer& operator=(const TcpServer&) = delete;
 
+    void setThreadNum(int numThreads);
+
     void setConnectionCallback(ConnectionCallback cb) {
         connectionCallback_ = std::move(cb);
     }
