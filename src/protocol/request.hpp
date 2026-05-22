@@ -1,18 +1,14 @@
 #pragma once
 #include <string>
 
-namespace protocol{
+namespace protocol {
 
-enum class CommandType {
-    GET,
-    SET,
-    DEL
-};
+enum class CommandType { GET, SET, DEL };
 
 struct Request {
-    CommandType cmd;
-    std::string key;
-    std::string value;
+  CommandType cmd;
+  std::string key;
+  std::string value;
 };
 
-}//namespace protocol
+}  // namespace protocol

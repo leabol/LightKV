@@ -1,0 +1,77 @@
+# Google C++ Style — 微调版
+# 基于 Google 内置风格，调整了几个常用的代码习惯
+#
+# 用法：
+#   格式化单个文件： clang-format -i src/xxx.cpp
+#   格式化整个项目： find src/ -name '*.cpp' -o -name '*.hpp' | xargs clang-format -i
+#
+BasedOnStyle: Google
+
+# 列宽 100（Google 默认 80，对于现代宽屏偏窄）
+ColumnLimit: 100
+
+# 允许短块/循环/函数写在一行
+AllowShortBlocksOnASingleLine: Always
+AllowShortFunctionsOnASingleLine: Inline
+AllowShortIfStatementsOnASingleLine: Never
+AllowShortLoopsOnASingleLine: false
+
+# 访问修饰符（public/private）缩进 1 级，不在列 1
+AccessModifierOffset: -2
+
+# 构造函数初始化列表的换行
+ConstructorInitializerAllOnOneLineOrOnePerLine: false
+
+# 命名空间不缩进内部内容
+FixNamespaceComments: true
+NamespaceIndentation: None
+
+# 指针/引用靠左（int* p），不居中（int *p）也不靠右（int *p）
+PointerAlignment: Left
+ReferenceAlignment: Left
+
+# 头文件分组：标准库 → 项目内
+IncludeBlocks: Regroup
+IncludeCategories:
+  - Regex:           '^<.*\.h>$'
+    Priority:        1
+  - Regex:           '^<.*>'
+    Priority:        2
+  - Regex:           '^".*"'
+    Priority:        3
+  - Regex:           '.*'
+    Priority:        4
+
+# 排序 include
+SortIncludes: CaseSensitive
+
+# 不要将继承和初始化列表拆到多行（除非超过列宽）
+BreakInheritanceList: AfterComma
+BreakConstructorInitializers: AfterColon
+
+# 连续空行最多 2 行
+MaxEmptyLinesToKeep: 2
+
+# 允许括号后换行
+AllowAllParametersOfDeclarationOnNextLine: false
+BinPackArguments: false
+BinPackParameters: false
+
+# 大括号
+BreakBeforeBraces: Attach
+
+# 操作符换行
+BreakBeforeBinaryOperators: None
+BreakBeforeTernaryOperators: true
+AlignAfterOpenBracket: Align
+
+# case label 不写在一行
+AllowShortCaseLabelsOnASingleLine: false
+
+# lambda 格式
+AlignConsecutiveAssignments: false
+AlignConsecutiveDeclarations: false
+
+# 尽量不换行
+PenaltyReturnTypeOnItsOwnLine: 1000
+PenaltyExcessCharacter: 10

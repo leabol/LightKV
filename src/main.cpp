@@ -1,23 +1,24 @@
-#include "EventLoop.hpp"
-#include "InetAddress.hpp"
-#include "server/kv_server.hpp"
-#include "Log.hpp"
 #include <spdlog/common.h>
 
+#include "EventLoop.hpp"
+#include "InetAddress.hpp"
+#include "Log.hpp"
+#include "server/kv_server.hpp"
+
 int main(int argc, char** argv) {
-    Server::setLevel(spdlog::level::off);
-	std::string port = "8990";
-	if (argc > 1) {
-		port = argv[1];
-	}
+  Server::setLevel(spdlog::level::off);
+  std::string port = "8990";
+  if (argc > 1) {
+    port = argv[1];
+  }
 
-	net::EventLoop loop;
-	net::InetAddress listenAddr(port);
+  net::EventLoop loop;
+  net::InetAddress listenAddr(port);
 
-	server::KvServer srv(&loop, listenAddr);
-	srv.setThreadNum(8);
-	srv.start();
+  server::KvServer srv(&loop, listenAddr);
+  srv.setThreadNum(8);
+  srv.start();
 
-	loop.loop();
-	return 0;
+  loop.loop();
+  return 0;
 }

@@ -1,5 +1,4 @@
 #pragma once
-
 #include <sys/socket.h>
 
 #include <functional>
@@ -13,31 +12,30 @@ class EventLoop;
 class InetAddress;
 
 class Acceptor {
-  public:
-    using NewConnectionCallback = std::function<void(int, const InetAddress&)>;
+public:
+  using NewConnectionCallback = std::function<void(int, const InetAddress&)>;
 
-    Acceptor(EventLoop* loop, const InetAddress& addr);
-    ~Acceptor();
+  Acceptor(EventLoop* loop, const InetAddress& addr);
+  ~Acceptor();
 
-    Acceptor(const Acceptor&)            = delete;
-    Acceptor& operator=(const Acceptor&) = delete;
-    Acceptor(Acceptor&&)                 = delete;
-    Acceptor& operator=(Acceptor&&)      = delete;
+  Acceptor(const Acceptor&) = delete;
+  Acceptor& operator=(const Acceptor&) = delete;
+  Acceptor(Acceptor&&) = delete;
+  Acceptor& operator=(Acceptor&&) = delete;
 
-    void setNewConnectionCallback(NewConnectionCallback cb) {
-        newConnectionCb_ = std::move(cb);
-    }
+  void setNewConnectionCallback(NewConnectionCallback cb) { newConnectionCb_ = std::move(cb); }
 
-    void listen(int backlog = SOMAXCONN);
-    bool listening() const { return listening_;}
-  private:
-    void handleRead();
+  void listen(int backlog = SOMAXCONN);
+  bool listening() const { return listening_; }
 
-    EventLoop*            loop_{nullptr};
-    Socket                acceptSocket_;        // 监听socket
-    Channel               acceptChannel_;       // 用来接收socket, 通过使用handleRead回调
-    NewConnectionCallback newConnectionCb_;  // 具体处理连接的socket
-    bool listening_;
-    int idleFd_;
+private:
+  void handleRead();
+
+  EventLoop* loop_{nullptr};
+  bool listening_{false};
+  int idleFd_{-1};
+  Socket acceptSocket_;                    // 监听socket
+  Channel acceptChannel_;                  // 用来接收socket, 通过使用handleRead回调
+  NewConnectionCallback newConnectionCb_;  // 具体处理连接的socket
 };
-}  // namespace Server
+}  // namespace net

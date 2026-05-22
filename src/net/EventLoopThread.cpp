@@ -1,52 +1,51 @@
 #include "EventLoopThread.hpp"
-#include "EventLoop.hpp"
+
 #include <assert.h>
 
-namespace net{
+#include "EventLoop.hpp"
 
-EventLoopThread::EventLoopThread(const ThreadInitCallback& cb)
-: loop_(nullptr)
-, exiting_(false)
-, tInitCallback_(cb)
-{}
+namespace net {
 
-EventLoopThread::~EventLoopThread(){
-    exiting_ = true;
-    if (loop_){
-        loop_->quit();
-        thread_.join();
-    }
+EventLoopThread::EventLoopThread(const ThreadInitCallback& cb) :
+    loop_(nullptr), exiting_(false), tInitCallback_(cb) {}
+
+EventLoopThread::~EventLoopThread() {
+  exiting_ = true;
+  if (loop_) {
+    loop_->quit();
+    thread_.join();
+  }
 }
 
-EventLoop* EventLoopThread::startLoop(){
-     thread_ = std::thread([this]{this->threadFunc();});
-     EventLoop* loop = nullptr;
-     {
-        std::unique_lock<std::mutex> lock(mutex_);
-        cond_.wait(lock, [this]{return loop_ != nullptr;});
-     }
-     loop = loop_;
-     assert(loop);
-     return loop;
+EventLoop* EventLoopThread::startLoop() {
+  thread_ = std::thread([this] { this->threadFunc(); });
+  EventLoop* loop = nullptr;
+  {
+    std::unique_lock<std::mutex> lock(mutex_);
+    cond_.wait(lock, [this] { return loop_ != nullptr; });
+  }
+  loop = loop_;
+  assert(loop);
+  return loop;
 }
 
-void EventLoopThread::threadFunc(){
-    EventLoop loop;
-    
-    if (tInitCallback_){
-        tInitCallback_(&loop);
-    }
+void EventLoopThread::threadFunc() {
+  EventLoop loop;
 
-    {
-        std::lock_guard<std::mutex> lock(mutex_);
-        loop_ = &loop;
-        cond_.notify_all();
-    }
+  if (tInitCallback_) {
+    tInitCallback_(&loop);
+  }
 
-    loop.loop();
-
+  {
     std::lock_guard<std::mutex> lock(mutex_);
-    loop_ = nullptr;
+    loop_ = &loop;
+    cond_.notify_all();
+  }
+
+  loop.loop();
+
+  std::lock_guard<std::mutex> lock(mutex_);
+  loop_ = nullptr;
 }
 
-}//namespace net
+}  // namespace net

@@ -1,11 +1,11 @@
-#pragma once 
+#pragma once
 #include <string>
 
-namespace protocol{
+namespace protocol {
 
 struct Response {
-    bool ok;
-    std::string value;
+  bool ok;
+  std::string value;
 };
 
-}//namespace protocol
+}  // namespace protocol

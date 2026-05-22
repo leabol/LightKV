@@ -1,27 +1,27 @@
-#include "TcpServer.hpp"
+#include <spdlog/common.h>
+
 #include "EventLoop.hpp"
 #include "InetAddress.hpp"
 #include "Log.hpp"
-#include <spdlog/common.h>
+#include "TcpServer.hpp"
 
 int main() {
-    Server::setLevel(spdlog::level::off);
+  Server::setLevel(spdlog::level::off);
 
-    net::EventLoop loop;
-    net::InetAddress listenAddr("8990");
+  net::EventLoop loop;
+  net::InetAddress listenAddr("8990");
 
-    net::TcpServer server(&loop, listenAddr);
-    server.setMessageCallback([](const net::TcpServer::TcpConnectionPtr& conn,
-                                 net::Buffer& data) {
-        size_t n = data.readableByte();
-        if (n > 0) {
-            std::string s(reinterpret_cast<char*>(data.readPoint()), n);
-            conn->send(s);
-            data.consume(n);
-        }
-    });
+  net::TcpServer server(&loop, listenAddr);
+  server.setMessageCallback([](const net::TcpServer::TcpConnectionPtr& conn, net::Buffer& data) {
+    size_t n = data.readableByte();
+    if (n > 0) {
+      std::string s(reinterpret_cast<char*>(data.readPoint()), n);
+      conn->send(s);
+      data.consume(n);
+    }
+  });
 
-    server.start();
-    loop.loop();
-    return 0;
+  server.start();
+  loop.loop();
+  return 0;
 }
