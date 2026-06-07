@@ -4,7 +4,7 @@ project(LightKV LANGUAGES CXX)
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
-option(LIGHTKV_BUILD_EXAMPLES "Build LightKV examples" ON)
+option(LIGHTKV_BUILD_EXAMPLES "Build LightKV examples" OFF)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -40,6 +40,14 @@ target_include_directories(util
         ${CMAKE_CURRENT_SOURCE_DIR}/src
 )
 
+add_library(storage INTERFACE)
+
+# Interface libraries have no build output, but provide include paths to targets that link against them
+target_include_directories(storage
+    INTERFACE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+
 target_compile_options(net PRIVATE -Wall -Wextra -Wpedantic)
 target_compile_options(util PRIVATE -Wall -Wextra -Wpedantic)
 
@@ -50,8 +58,9 @@ target_link_libraries(net
     PUBLIC
         Threads::Threads
         spdlog::spdlog
-    util
-
+    PRIVATE
+        util
+        storage
 )
 
 if(LIGHTKV_BUILD_EXAMPLES)
@@ -86,7 +95,13 @@ target_link_libraries(lightkv_kv_server PRIVATE net util)
         tests/rbench_client.cpp
     )
     target_link_libraries(lightkv_rbench_client PRIVATE net util)
-add_executable(lightkv_conn_stress_test
-    tests/conn_stress_test.cpp
-)
-target_link_libraries(lightkv_conn_stress_test PRIVATE net util)
+    
+    add_executable(lightkv_conn_stress_test
+        tests/conn_stress_test.cpp
+    )
+    target_link_libraries(lightkv_conn_stress_test PRIVATE net util)
+
+    add_executable(lightkv_wal_test
+        tests/wal_test.cpp
+    )
+    target_link_libraries(lightkv_wal_test PRIVATE net util)

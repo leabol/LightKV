@@ -1,11 +1,21 @@
 #include "server/kv_server.hpp"
 #include "protocol/codec.hpp"
 #include "protocol/parser.hpp"
+#include "protocol/request.hpp"
+#include "storage/wal/log_record.hpp"
+#include "storage/wal/wal_writer.hpp"
+#include "storage/wal/wal_reader.hpp"
+#include "util/Log.hpp"
 
 namespace server {
 
-KvServer::KvServer(net::EventLoop *loop, const net::InetAddress &listenAddr) :
-    server_(loop, listenAddr), dispatcher_(&memtable_) {
+KvServer::KvServer(net::EventLoop *loop, const net::InetAddress &listenAddr, const std::filesystem::path& walPath) :
+    server_(loop, listenAddr), dispatcher_(&memtable_), walWriter_(walPath) {
+  // 启动时从WAL恢复数据
+  LOG_INFO("Recovering from WAL: {}", walPath.string());
+  wal::WALReader::Recover(walPath, memtable_);
+  LOG_INFO("WAL recovery done");
+
   server_.setMessageCallback([this](const net::TcpServer::TcpConnectionPtr &conn,
                                     net::Buffer &data) { this->onMessage(conn, data); });
   dispatcher_.registerHandler(
@@ -25,11 +35,17 @@ void KvServer::start() {
 
 void KvServer::onMessage(const net::TcpServer::TcpConnectionPtr &conn, net::Buffer &inputBuffer) {
   Request req;
-  // 直接从接收buffer上解析请求
   if (!parserRequest(inputBuffer, req)) {
     return;
   }
+  LOG_DEBUG("cmd={} key={}", static_cast<int>(req.cmd), req.key);
+  if (req.cmd == CommandType::SET || req.cmd == CommandType::DEL) {
+    wal::LogRecord record{wal::FromCommandType(req.cmd), req.key, req.value};
+    walWriter_.append(record);
+    LOG_DEBUG("WAL wrote: type={} key={}", static_cast<int>(record.type), req.key);
+  }
   Response rsp = dispatcher_.dispatch(req);
+  LOG_DEBUG("response: ok={} value={}", rsp.ok, rsp.value);
   std::string rspData = encodeResponse(rsp);
   conn->send(rspData);
 }
