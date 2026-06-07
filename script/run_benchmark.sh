@@ -2,7 +2,7 @@
 
 # Configuration and Paths
 SERVER_BIN="./build/lightkv_kv_server"
-PORT=11223
+PORT=8990
 
 # Ensure binaries exist
 if [ ! -f "$SERVER_BIN" ]; then
