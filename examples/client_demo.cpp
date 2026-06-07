@@ -4,8 +4,8 @@
 #include <iostream>
 #include <string>
 
-#include "Log.hpp"
-#include "Socket.hpp"
+#include "util/Log.hpp"
+#include "net/Socket.hpp"
 
 int main() {
   Server::setLevel(spdlog::level::off);

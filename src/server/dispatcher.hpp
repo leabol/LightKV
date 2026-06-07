@@ -2,8 +2,8 @@
 #include <functional>
 #include <unordered_map>
 
-#include "request.hpp"
-#include "response.hpp"
+#include "protocol/request.hpp"
+#include "protocol/response.hpp"
 
 using namespace protocol;
 using Storage = std::unordered_map<std::string, std::string>;

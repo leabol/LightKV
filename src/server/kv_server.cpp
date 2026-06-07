@@ -1,9 +1,9 @@
-#include "kv_server.hpp"
+#include "server/kv_server.hpp"
 
 #include <mutex>
 
-#include "codec.hpp"
-#include "parser.hpp"
+#include "protocol/codec.hpp"
+#include "protocol/parser.hpp"
 
 namespace server {
 

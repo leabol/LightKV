@@ -1,8 +1,8 @@
-#include "EventLoopThread.hpp"
+#include "net/EventLoopThread.hpp"
 
 #include <assert.h>
 
-#include "EventLoop.hpp"
+#include "net/EventLoop.hpp"
 
 namespace net {
 

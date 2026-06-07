@@ -1,9 +1,9 @@
 #include <spdlog/common.h>
 
-#include "EventLoop.hpp"
-#include "InetAddress.hpp"
-#include "Log.hpp"
-#include "TcpServer.hpp"
+#include "net/EventLoop.hpp"
+#include "net/InetAddress.hpp"
+#include "util/Log.hpp"
+#include "net/TcpServer.hpp"
 
 int main() {
   Server::setLevel(spdlog::level::off);

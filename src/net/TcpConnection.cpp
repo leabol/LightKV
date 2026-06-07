@@ -1,4 +1,4 @@
-#include "TcpConnection.hpp"
+#include "net/TcpConnection.hpp"
 
 #include <sys/socket.h>
 #include <unistd.h>
@@ -6,11 +6,11 @@
 #include <cerrno>
 #include <cstring>
 
-#include "Channel.hpp"
-#include "EventLoop.hpp"
-#include "Log.hpp"
-#include "Socket.hpp"
-#include "buffer.hpp"
+#include "net/Channel.hpp"
+#include "net/EventLoop.hpp"
+#include "util/Log.hpp"
+#include "net/Socket.hpp"
+#include "net/buffer.hpp"
 
 namespace net {
 
@@ -186,7 +186,9 @@ void TcpConnection::handleClose() {
   channel_->disableAll();
   // channel_->remove(); // 可选：若需要主动从 Loop 移除
   if (closeCallback_) {
+    // 这里会清楚tcpserver的所有权，防止tcpconnection被释放
     auto self = shared_from_this();
+    //调用tcpserver::removeConnection()
     closeCallback_(self);
   } else if (connectionCallback_) {
     auto self = shared_from_this();

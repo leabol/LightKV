@@ -13,8 +13,8 @@
 #include <thread>
 #include <vector>
 
-#include "Log.hpp"
-#include "Socket.hpp"
+#include "util/Log.hpp"
+#include "net/Socket.hpp"
 
 using namespace std;
 using namespace net;

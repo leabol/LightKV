@@ -1,8 +1,8 @@
 #include <spdlog/common.h>
 
-#include "EventLoop.hpp"
-#include "InetAddress.hpp"
-#include "Log.hpp"
+#include "net/EventLoop.hpp"
+#include "net/InetAddress.hpp"
+#include "util/Log.hpp"
 #include "server/kv_server.hpp"
 
 int main(int argc, char** argv) {

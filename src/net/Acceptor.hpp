@@ -3,8 +3,8 @@
 
 #include <functional>
 
-#include "Channel.hpp"
-#include "Socket.hpp"
+#include "net/Channel.hpp"
+#include "net/Socket.hpp"
 
 namespace net {
 

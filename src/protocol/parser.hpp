@@ -1,8 +1,8 @@
 #pragma once
 #include <cstdint>
 
-#include "buffer.hpp"
-#include "request.hpp"
+#include "net/buffer.hpp"
+#include "protocol/request.hpp"
 
 // Protocol frame layout:
 //

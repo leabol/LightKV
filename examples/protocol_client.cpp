@@ -6,9 +6,9 @@
 #include <string>
 #include <vector>
 
-#include "InetAddress.hpp"
-#include "Log.hpp"
-#include "Socket.hpp"
+#include "net/InetAddress.hpp"
+#include "util/Log.hpp"
+#include "net/Socket.hpp"
 
 using namespace std;
 using namespace net;

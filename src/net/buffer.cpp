@@ -1,4 +1,4 @@
-#include "buffer.hpp"
+#include "net/buffer.hpp"
 
 #include <algorithm>
 #include <cassert>

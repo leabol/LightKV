@@ -5,12 +5,12 @@
 #include <string>
 #include <unordered_map>
 
-#include "TcpConnection.hpp"
-#include "TcpServer.hpp"
-#include "buffer.hpp"
-#include "dispatcher.hpp"
-#include "request.hpp"
-#include "response.hpp"
+#include "net/TcpConnection.hpp"
+#include "net/TcpServer.hpp"
+#include "net/buffer.hpp"
+#include "server/dispatcher.hpp"
+#include "protocol/request.hpp"
+#include "protocol/response.hpp"
 
 namespace server {
 using Storage = std::unordered_map<std::string, std::string>;

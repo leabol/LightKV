@@ -3,7 +3,7 @@
 #include <memory>
 #include <string>
 
-#include "buffer.hpp"
+#include "net/buffer.hpp"
 
 
 namespace net {

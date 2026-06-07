@@ -2,7 +2,7 @@
 #include <cstdint>
 #include <string>
 
-#include "response.hpp"
+#include "protocol/response.hpp"
 
 // Request frame layout:
 //  +----------+-------+----------+---------+----------+---------+

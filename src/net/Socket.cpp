@@ -1,4 +1,4 @@
-#include "Socket.hpp"
+#include "net/Socket.hpp"
 
 #include <fcntl.h>
 #include <netdb.h>
@@ -11,8 +11,8 @@
 #include <cerrno>
 #include <cstring>
 
-#include "InetAddress.hpp"
-#include "Log.hpp"
+#include "net/InetAddress.hpp"
+#include "util/Log.hpp"
 
 using namespace net;
 

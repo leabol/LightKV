@@ -28,10 +28,7 @@ add_library(net STATIC
 
 target_include_directories(net
     PUBLIC
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/net
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/protocol
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/server
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/util
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
 )
 
 add_library(util STATIC
@@ -40,7 +37,7 @@ add_library(util STATIC
 
 target_include_directories(util
     PUBLIC
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/util
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
 )
 
 target_compile_options(net PRIVATE -Wall -Wextra -Wpedantic)
