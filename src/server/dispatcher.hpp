@@ -4,15 +4,15 @@
 
 #include "protocol/request.hpp"
 #include "protocol/response.hpp"
+#include "storage/memtable/memtable.hpp"
 
 using namespace protocol;
-using Storage = std::unordered_map<std::string, std::string>;
-using Handler = std::function<Response(const Request &, Storage &)>;
+using Handler = std::function<Response(const Request &)>;
 
 namespace server {
 class Dispatcher {
 public:
-  Dispatcher(std::unordered_map<std::string, std::string> *pStorage) { storage_ = pStorage; };
+  Dispatcher(storage::Memtable *pStorage) { storage_ = pStorage; };
 
   void registerHandler(const CommandType cmd, Handler handler) {
     handlers_[static_cast<int>(cmd)] = std::move(handler);
@@ -23,11 +23,11 @@ public:
     if (it == handlers_.end()) {
       return {false, "unsupported"};
     }
-    return it->second(req, *storage_);
+    return it->second(req);
   }
 
 private:
-  Storage *storage_{nullptr};
+  storage::Memtable *storage_{nullptr};
   std::unordered_map<int, Handler> handlers_;
 };
 }  // namespace server

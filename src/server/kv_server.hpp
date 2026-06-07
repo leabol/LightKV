@@ -1,20 +1,12 @@
 #pragma once
 #include <netinet/tcp.h>
 
-#include <mutex>
-#include <string>
-#include <unordered_map>
-
 #include "net/TcpConnection.hpp"
 #include "net/TcpServer.hpp"
 #include "net/buffer.hpp"
 #include "server/dispatcher.hpp"
-#include "protocol/request.hpp"
-#include "protocol/response.hpp"
 
 namespace server {
-using Storage = std::unordered_map<std::string, std::string>;
-using namespace protocol;
 
 class KvServer {
 public:
@@ -27,12 +19,7 @@ public:
   void setThreadNum(int numThreads);
 
 private:
-  Response handleGET(const Request& req, Storage& storage);
-  Response handleSET(const Request& req, Storage& storage);
-  Response handleDEL(const Request& req, Storage& storage);
-
-  std::mutex storageMutex_;
-  Storage storage_;
+  storage::Memtable memtable_;
   net::TcpServer server_;
   Dispatcher dispatcher_;
 };
