@@ -24,6 +24,7 @@ add_library(net STATIC
     src/server/kv_server.cpp
     src/net/EventLoopThread.cpp
     src/net/EventLoopThreadPoll.cpp
+    src/storage/wal/wal_writer.cpp
 )
 
 target_include_directories(net
