@@ -55,6 +55,7 @@ void WALWriter::append(const LogRecord& record) {
 
   {
     std::unique_lock lock(mtx_);
+    // 当超过队列最大值时,直接抛弃
     if (queue_.size() >= max_queue_size_) {
       LOG_WARN("WAL queue full ({}), dropping record for key={}", queue_.size(), record.key);
       return;
@@ -75,7 +76,6 @@ void WALWriter::writeLoop() {
 
       batch.swap(queue_);
     }
-    cv_.notify_all();
 
     if (batch.empty()) continue;
 
@@ -88,6 +88,7 @@ void WALWriter::writeLoop() {
     ::write(fd_, write_buf.data(), write_buf.size());
     ::fsync(fd_);
   }
+  LOG_INFO("writer thread is quit elegantly");
 }
 
 }  // namespace wal
