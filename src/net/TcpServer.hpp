@@ -30,6 +30,8 @@ public:
   TcpServer& operator=(const TcpServer&) = delete;
 
   void setThreadNum(int numThreads);
+  // 设置工作线程在 EventLoop 创建后的初始化回调
+  void setThreadInitCallback(ThreadInitCallback cb) { ThreadInitCallback_ = std::move(cb); }
 
   void setConnectionCallback(ConnectionCallback cb) { connectionCallback_ = std::move(cb); }
   void setMessageCallback(MessageCallback cb) { messageCallback_ = std::move(cb); }
@@ -54,6 +56,6 @@ private:
   ConnectionCallback connectionCallback_;  // 用户设置（可能为空）
   MessageCallback messageCallback_;
   WriteCompleteCallback writeCompleteCallback_;
-  ThreadInitCallback ThreadInitCallback_;
+  ThreadInitCallback ThreadInitCallback_;  // 工作线程初始化回调，start() 时传给线程池
 };
 }  // namespace net
