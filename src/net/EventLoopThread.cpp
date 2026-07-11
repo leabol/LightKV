@@ -7,11 +7,11 @@
 namespace net {
 
 EventLoopThread::EventLoopThread(const ThreadInitCallback& cb) :
-    loop_(nullptr), exiting_(false), tInitCallback_(cb) {}
+  tInitCallback_(cb) {}
 
 EventLoopThread::~EventLoopThread() {
   exiting_ = true;
-  if (loop_) {
+  if (loop_ != nullptr) {
     loop_->quit();
     thread_.join();
   }
