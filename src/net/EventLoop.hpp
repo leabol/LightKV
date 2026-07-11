@@ -19,33 +19,30 @@ public:
   EventLoop();
   ~EventLoop();
 
-  int createEventFd();  //  创建一个wakeup事件返回对应的fd
+  static int createEventFd();  //  创建一个wakeup事件返回对应的fd
   void loop();
-
   void quit();
 
   void addChannel(Channel* channel);  // 只能有channel类中调用, 外部不可直接使用
   void updateChannel(Channel* channel);
   void removeChannel(Channel* channel);
 
-  void assertInLoopThread();
+  void assertInLoopThread() const;
   bool isInLoopThread() const;
 
-  void wakeup();
-
+  void wakeup() const;
   void runInLoop(Functor cb);
   void queueInLoop(Functor cb);
 
 private:
   void doPendingFunctors();
-  void handelWakeup();
+  void handelWakeup() const;
 
+  const std::thread::id threadId_{0};
   bool looping_{false};
   std::atomic<bool> quit_{false};
   bool eventHandling_{false};
   bool callingPendingFunctors_{false};
-
-  const std::thread::id threadId_{0};
 
   std::unique_ptr<EpollPoller> poller_;
   std::vector<Channel*> activeChannels_;

@@ -20,13 +20,15 @@ const int kPollTimeMs = 10000;
 }
 
 EventLoop::EventLoop() :
-    looping_(false), quit_(false), eventHandling_(false), callingPendingFunctors_(false),
-    threadId_(std::this_thread::get_id()), poller_(std::make_unique<EpollPoller>()),
-    wakeupFd_(createEventFd()), wakeupChannel_(std::make_unique<Channel>(this, wakeupFd_)) {
-  wakeupChannel_->setReadCallback([this]() { this->handelWakeup(); });
-  wakeupChannel_->enableReading();
-  LOG_TRACE("EventLoop is created");
-}
+    threadId_(std::this_thread::get_id()), 
+    poller_(std::make_unique<EpollPoller>()),
+    wakeupFd_(createEventFd()), 
+    wakeupChannel_(std::make_unique<Channel>(this, wakeupFd_)) 
+  {
+    wakeupChannel_->setReadCallback([this]() { this->handelWakeup(); });
+    wakeupChannel_->enableReading();
+    LOG_TRACE("EventLoop is created");
+  }
 
 EventLoop::~EventLoop() {
   wakeupChannel_->disableAll();
@@ -77,7 +79,7 @@ void EventLoop::queueInLoop(Functor cb) {
     std::lock_guard<std::mutex> lock(mutex_);
     pendingFunctors_.push_back(std::move(cb));
   }
-  // 当为外部线程或者正在处理pending时添加唤醒事件
+  // 当为外部线程或者当前线程正在处理pending时添加唤醒事件
   if (!isInLoopThread() || callingPendingFunctors_) {
     wakeup();
   }
@@ -104,7 +106,7 @@ void EventLoop::removeChannel(Channel* channel) {
   assertInLoopThread();
   poller_->removeChannel(channel);
 }
-void EventLoop::wakeup() {
+void EventLoop::wakeup() const {
   uint64_t one = 1;
   ssize_t n = ::write(wakeupFd_, &one, sizeof(one));
   if (n != sizeof(one)) {
@@ -112,7 +114,7 @@ void EventLoop::wakeup() {
   }
 }
 
-void EventLoop::handelWakeup() {
+void EventLoop::handelWakeup() const {
   uint64_t one = 1;
   ssize_t n = ::read(wakeupFd_, &one, sizeof(one));
   if (n != sizeof(one)) {
@@ -135,11 +137,11 @@ void EventLoop::doPendingFunctors() {
 }
 
 
-void EventLoop::assertInLoopThread() {
+void EventLoop::assertInLoopThread() const {
   if (!isInLoopThread()) {
-    LOG_ERROR(
-        "EventLoop::abortNotInLoopThread - EventLoop {} was created in threadId_ = {} , current "
-        "thread id = {}");
+    LOG_ERROR("EventLoop::abortNotInLoopThread - EventLoop {} was created in threadId_ = {} , current thread id = {}",
+              static_cast<const void*>(this), fmt::streamed(threadId_),
+              fmt::streamed(std::this_thread::get_id()));
   }
 }
 
