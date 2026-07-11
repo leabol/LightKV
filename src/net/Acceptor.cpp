@@ -5,6 +5,7 @@
 #include <unistd.h>
 
 #include <cerrno>
+#include <cstddef>
 #include <cstring>
 
 #include "net/Channel.hpp"
@@ -16,7 +17,7 @@
 namespace net {
 
 Acceptor::Acceptor(EventLoop* loop, const InetAddress& listenAddr) :
-    loop_(loop), listening_{false}, idleFd_(::open("/dev/null", O_RDONLY | O_CLOEXEC)),
+    loop_(loop), idleFd_(::open("/dev/null", O_RDONLY | O_CLOEXEC)),
     acceptChannel_(loop, acceptSocket_.fd()) {
   if (idleFd_ < 0){
     LOG_WARN("idleFd open faild");
@@ -71,7 +72,7 @@ void Acceptor::handleRead() {
     }
     if (errno == EMFILE) {
       ::close(idleFd_);
-      idleFd_ = ::accept(acceptSocket_.fd(), NULL, NULL);
+      idleFd_ = ::accept(acceptSocket_.fd(), nullptr, nullptr);
       ::close(idleFd_);
       idleFd_ = ::open("/dev/null", O_RDONLY | O_CLOEXEC);
       continue;
