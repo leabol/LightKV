@@ -18,7 +18,8 @@ class EventLoopThread;
 class TcpServer {
 public:
   using TcpConnectionPtr = std::shared_ptr<TcpConnection>;
-  using ConnectionCallback = TcpConnection::ConnectionCallback;        // 建立/关闭
+  using ConnectionCallback = TcpConnection::ConnectionCallback;        // 连接建立
+  using DisconnectCallback = TcpConnection::ConnectionCallback;        // 连接断开
   using MessageCallback = TcpConnection::MessageCallback;              // 收到数据
   using WriteCompleteCallback = TcpConnection::WriteCompleteCallback;  // 发送完成
   using ThreadInitCallback = std::function<void(EventLoop*)>;
@@ -34,6 +35,7 @@ public:
   void setThreadInitCallback(ThreadInitCallback cb) { ThreadInitCallback_ = std::move(cb); }
 
   void setConnectionCallback(ConnectionCallback cb) { connectionCallback_ = std::move(cb); }
+  void setDisconnectCallback(DisconnectCallback cb) { disconnectCallback_ = std::move(cb); }
   void setMessageCallback(MessageCallback cb) { messageCallback_ = std::move(cb); }
   void setWriteCompleteCallback(WriteCompleteCallback cb) {
     writeCompleteCallback_ = std::move(cb);
@@ -53,7 +55,8 @@ private:
 
   std::unordered_map<int, TcpConnectionPtr> connections_;  // fd -> 连接
 
-  ConnectionCallback connectionCallback_;  // 用户设置（可能为空）
+  ConnectionCallback connectionCallback_;    // 连接建立回调（可能为空）
+  DisconnectCallback disconnectCallback_;    // 连接断开回调（可能为空）
   MessageCallback messageCallback_;
   WriteCompleteCallback writeCompleteCallback_;
   ThreadInitCallback ThreadInitCallback_;  // 工作线程初始化回调，start() 时传给线程池

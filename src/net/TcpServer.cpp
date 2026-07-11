@@ -62,8 +62,8 @@ void TcpServer::newConnection(int sockfd, const InetAddress& peer) {
     conn->setWriteCompleteCallback(writeCompleteCallback_);
   }
   conn->setCloseCallback([this](const TcpConnectionPtr& c) {
-    if (connectionCallback_) {
-      connectionCallback_(c);  // reuse connection callback to report disconnect event
+    if (disconnectCallback_) {
+      disconnectCallback_(c);
     }
     loop_->runInLoop([this, c]{
       this->removeConnection(c);
