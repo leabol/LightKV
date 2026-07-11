@@ -13,6 +13,8 @@ EventLoopThread::~EventLoopThread() {
   exiting_ = true;
   if (loop_ != nullptr) {
     loop_->quit();
+  }
+  if (thread_.joinable()) {
     thread_.join();
   }
 }

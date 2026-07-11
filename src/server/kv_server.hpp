@@ -5,8 +5,7 @@
 #include "net/TcpConnection.hpp"
 #include "net/TcpServer.hpp"
 #include "net/buffer.hpp"
-#include "server/dispatcher.hpp"
-#include "storage/wal/wal_writer.hpp"
+#include "server/storage.hpp"
 
 namespace server {
 
@@ -21,10 +20,7 @@ public:
   void setThreadNum(int numThreads);
 
 private:
-  storage::Memtable memtable_;
+  Storage storage_;
   net::TcpServer server_;
-  Dispatcher dispatcher_;
-
-  wal::WALWriter walWriter_;
 };
 }  // namespace server

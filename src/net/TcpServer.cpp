@@ -50,7 +50,7 @@ void TcpServer::newConnection(int sockfd, const InetAddress& peer) {
   (void)peer;
   loop_->assertInLoopThread();
   EventLoop* ioLoop = threadPools_.getNextLoop();
-  // 设置 conn 的 ioloop
+  // 设置 conn 的回调函数
   auto conn = std::make_shared<TcpConnection>(ioLoop, sockfd);
   if (connectionCallback_) {
     conn->setConnectionCallback(connectionCallback_);
@@ -65,10 +65,12 @@ void TcpServer::newConnection(int sockfd, const InetAddress& peer) {
     if (disconnectCallback_) {
       disconnectCallback_(c);
     }
+    //通知主循环删除连接
     loop_->runInLoop([this, c]{
       this->removeConnection(c);
     });
   });
+
   connections_.emplace(sockfd, conn);
   // 添加到ioloop的pending队列中
   ioLoop->runInLoop([conn]() {
