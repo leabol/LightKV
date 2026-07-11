@@ -2,3 +2,4 @@ build/
 .cache
 .vscode-ctags
 /wal
+compile_commands.json

@@ -8,7 +8,7 @@
 
 namespace net {
 EventLoopThreadPool::EventLoopThreadPool(EventLoop* baseLoop) :
-    baseLoop_(baseLoop), start_(false), numThreads_(0), next_(0) {}
+    baseLoop_(baseLoop) {}
 
 EventLoopThreadPool::~EventLoopThreadPool() {}
 
