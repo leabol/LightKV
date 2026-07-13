@@ -1,9 +1,9 @@
 #pragma once
-#include <chrono>
 #include <condition_variable>
+#include <deque>
 #include <filesystem>
+#include <functional>
 #include <mutex>
-#include <queue>
 #include <string>
 #include <thread>
 
@@ -12,6 +12,13 @@
 namespace wal {
 class WALWriter {
 public:
+  using CompletionCallback = std::function<void(bool)>;
+
+  struct WALTask {
+    std::string data;
+    CompletionCallback completion;
+  };
+
   explicit WALWriter(const std::filesystem::path& walPath);
   ~WALWriter();
 
@@ -19,6 +26,7 @@ public:
   WALWriter& operator=(const WALWriter&) = delete;
 
   void append(const LogRecord& record);
+  void appendBatch(std::string data, CompletionCallback callback);
 
 private:
   void writeLoop();
@@ -27,11 +35,9 @@ private:
 
   std::mutex mtx_;
   std::condition_variable cv_;
-  std::queue<std::string> queue_;
+  std::deque<WALTask> tasks_;
   bool stop_{false};
 
   std::thread write_thread_;
-  static constexpr size_t max_queue_size_{100000}; // 队列的最大容量
-  static constexpr std::chrono::milliseconds flush_interval_{50}; //50ms检测一次
 };
 }  // namespace wal

@@ -2,6 +2,8 @@ cmake_minimum_required(VERSION 3.16)
 
 project(LightKV LANGUAGES CXX)
 
+include(CTest)
+
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 option(LIGHTKV_BUILD_EXAMPLES "Build LightKV examples" OFF)
@@ -107,3 +109,4 @@ target_link_libraries(lightkv_kv_server PRIVATE net util)
         tests/wal_test.cpp
     )
     target_link_libraries(lightkv_wal_test PRIVATE net util)
+    add_test(NAME lightkv_wal_test COMMAND lightkv_wal_test)
