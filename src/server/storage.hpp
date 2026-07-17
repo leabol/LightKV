@@ -53,7 +53,7 @@ private:
   void submitWriteBatch();
   void completeWriteBatch(std::vector<PendingRequest> requests, bool success);
   void reply(PendingRequest& pending, const Response& response);
-  std::string encodeLogRecord(const protocol::Request& record);
+  std::string encodeLogRecord(const protocol::Request& request);
 
   net::EventLoop* loop_{nullptr};
 
