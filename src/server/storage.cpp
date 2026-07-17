@@ -50,20 +50,26 @@ void Storage::stop() {
   }
 }
 
-void Storage::executeAndReply(PendingRequest pending) {
-  auto req = pending.request;
-  LOG_DEBUG("cmd={} key={}", static_cast<int>(req.cmd), req.key);
+void Storage::handleRequest(const Request& req,
+                             const net::TcpServer::TcpConnectionPtr& conn,
+                             net::EventLoop* ioLoop) {
+  loop_->queueInLoop([this, req, conn, ioLoop]{
+    pendingRequests_.push_back({req, conn, ioLoop});
+    processPendingRequests();
+  });
+}
 
-  // 执行get操作
-  Response rsp = dispatcher_->dispatch(req);
-  LOG_DEBUG("response: ok={} value={}", rsp.ok, rsp.value);
+void Storage::initWAL() {
+  loop_->assertInLoopThread();
+  LOG_INFO("Recovering from WAL: {}", walPath_.string());
 
-  // 编码响应
-  std::string rspData = encodeResponse(rsp);
+  // 恢复数据到 memtable
+  wal::WALReader::Recover(walPath_, memtable_);
 
-  // 将发送任务投递回 IO 线程
+  // 初始化 WALWriter
+  walWriter_ = std::make_unique<wal::WALWriter>(walPath_);
 
-  pending.ioLoop->queueInLoop([conn = pending.connection, rspData] { conn->send(rspData); });
+  LOG_INFO("WAL recovery done, storage ready");
 }
 
 void Storage::processPendingRequests() {
@@ -82,24 +88,30 @@ void Storage::processPendingRequests() {
     return;
   }
 }
-std::string Storage::encodeLogRecord(const protocol::Request& request){
-  wal::RecordHeader header{};
-  header.crc = 0;
-  header.key_size = request.key.size();
-  header.value_size = request.value.size();
-  header.type = static_cast<uint8_t>(wal::FromCommandType(request.cmd));
 
-  size_t total_size = sizeof(header) + request.key.size() + request.value.size();
-  std::string buffer;
-  buffer.reserve(total_size);
-  buffer.append(reinterpret_cast<const char*>(&header), sizeof(header));
-  buffer.append(request.key.data(), request.key.size());
-  buffer.append(request.value.data(), request.value.size());
+void Storage::executeAndReply(PendingRequest pending) {
+  auto req = pending.request;
+  LOG_DEBUG("cmd={} key={}", static_cast<int>(req.cmd), req.key);
 
-  uint32_t crc = util::crc32::Value(buffer.data() + sizeof(uint32_t), buffer.size() - sizeof(uint32_t));
-  std::memcpy(buffer.data(), &crc, sizeof(crc));
-  
-  return buffer;
+  // 执行get操作
+  Response rsp = dispatcher_->dispatch(req);
+  LOG_DEBUG("response: ok={} value={}", rsp.ok, rsp.value);
+
+  // 编码响应
+  std::string rspData = encodeResponse(rsp);
+
+  // 将发送任务投递回 IO 线程
+
+  pending.ioLoop->queueInLoop([conn = pending.connection, rspData] { conn->send(rspData); });
+}
+
+void Storage::reply(PendingRequest& pending, const Response& response) {
+  std::string data = encodeResponse(response);
+
+  pending.ioLoop->queueInLoop(
+      [conn = pending.connection, data = std::move(data)]() mutable {
+        conn->send(data);
+      });
 }
 
 void Storage::submitWriteBatch() {
@@ -124,6 +136,7 @@ void Storage::submitWriteBatch() {
         });
       });
 }
+
 void Storage::completeWriteBatch(std::vector<PendingRequest> requests, bool success){
   for(auto& pending : requests){
     Response response;
@@ -140,34 +153,25 @@ void Storage::completeWriteBatch(std::vector<PendingRequest> requests, bool succ
   writeInFlight_ = false;
   processPendingRequests();
 }
-void Storage::handleRequest(const Request& req,
-                             const net::TcpServer::TcpConnectionPtr& conn,
-                             net::EventLoop* ioLoop) {
-  loop_->queueInLoop([this, req, conn, ioLoop]{
-    pendingRequests_.push_back({req, conn, ioLoop});
-    processPendingRequests();
-  });
-}
-void Storage::reply(PendingRequest& pending, const Response& response) {
-  std::string data = encodeResponse(response);
 
-  pending.ioLoop->queueInLoop(
-      [conn = pending.connection, data = std::move(data)]() mutable {
-        conn->send(data);
-      });
-}
+std::string Storage::encodeLogRecord(const protocol::Request& request){
+  wal::RecordHeader header{};
+  header.crc = 0;
+  header.key_size = request.key.size();
+  header.value_size = request.value.size();
+  header.type = static_cast<uint8_t>(wal::FromCommandType(request.cmd));
 
-void Storage::initWAL() {
-  loop_->assertInLoopThread();
-  LOG_INFO("Recovering from WAL: {}", walPath_.string());
+  size_t total_size = sizeof(header) + request.key.size() + request.value.size();
+  std::string buffer;
+  buffer.reserve(total_size);
+  buffer.append(reinterpret_cast<const char*>(&header), sizeof(header));
+  buffer.append(request.key.data(), request.key.size());
+  buffer.append(request.value.data(), request.value.size());
 
-  // 恢复数据到 memtable
-  wal::WALReader::Recover(walPath_, memtable_);
-
-  // 初始化 WALWriter
-  walWriter_ = std::make_unique<wal::WALWriter>(walPath_);
-
-  LOG_INFO("WAL recovery done, storage ready");
+  uint32_t crc = util::crc32::Value(buffer.data() + sizeof(uint32_t), buffer.size() - sizeof(uint32_t));
+  std::memcpy(buffer.data(), &crc, sizeof(crc));
+  
+  return buffer;
 }
 
 }  // namespace server
