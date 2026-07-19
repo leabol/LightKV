@@ -1,13 +1,15 @@
 #pragma once
 
+#include <condition_variable>
 #include <deque>
 #include <filesystem>
+#include <functional>
 #include <memory>
+#include <mutex>
 #include <string>
+#include <thread>
 #include <vector>
 
-#include "net/EventLoop.hpp"
-#include "net/EventLoopThread.hpp"
 #include "net/TcpConnection.hpp"
 #include "net/TcpServer.hpp"
 #include "protocol/request.hpp"
@@ -21,8 +23,8 @@ class EventLoop;
 }
 
 namespace server {
-// 存储线程：独占 memtable_，其他线程通过 queueInLoop 与之通信
-class Storage {
+// 存储协调器：串联 I/O、WAL 和 memtable
+class StorageCoordinator {
   struct PendingRequest {
     protocol::Request request;
     net::TcpServer::TcpConnectionPtr connection;
@@ -35,8 +37,8 @@ class Storage {
   };
 
 public:
-  explicit Storage(const std::filesystem::path& walPath);
-  ~Storage();
+  explicit StorageCoordinator(const std::filesystem::path& walPath);
+  ~StorageCoordinator();
 
   void start();
   void stop();
@@ -48,6 +50,8 @@ public:
 
 private:
   void initWAL();
+  void workerLoop();
+  void enqueueTask(std::function<void()> task);
   void processPendingRequests();
   void executeAndReply(PendingRequest pending);
   void submitWriteBatch();
@@ -55,13 +59,16 @@ private:
   void reply(PendingRequest& pending, const Response& response);
   std::string encodeLogRecord(const protocol::Request& request);
 
-  net::EventLoop* loop_{nullptr};
-
   storage::Memtable memtable_;
   std::unique_ptr<Dispatcher> dispatcher_;
   std::unique_ptr<wal::WALWriter> walWriter_;
   std::filesystem::path walPath_;
-  net::EventLoopThread loopThread_;
+  std::thread workerThread_;
+  std::mutex mutex_;
+  std::condition_variable cv_;
+  std::deque<std::function<void()>> tasks_;
+  bool stop_{false};
+  bool ready_{false};
   std::deque<PendingRequest> pendingRequests_;
   bool writeInFlight_{false};
 };

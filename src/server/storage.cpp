@@ -3,6 +3,7 @@
 #include <cstring>
 #include <filesystem>
 #include <memory>
+#include <utility>
 #include <vector>
 
 #include "net/EventLoop.hpp"
@@ -18,68 +19,103 @@
 
 namespace server {
 
-Storage::Storage(const std::filesystem::path& walPath)
+StorageCoordinator::StorageCoordinator(const std::filesystem::path& walPath)
     : walPath_(walPath) {}
 
-Storage::~Storage() {
+StorageCoordinator::~StorageCoordinator() {
   stop();
 }
 
-void Storage::start() {
-  loop_ = loopThread_.startLoop();
+void StorageCoordinator::start() {
+  workerThread_ = std::thread([this] { workerLoop(); });
 
-  // 在存储线程中初始化
-  loop_->runInLoop([this] {
-    initWAL();
+  std::unique_lock<std::mutex> lock(mutex_);
+  cv_.wait(lock, [this] { return ready_; });
 
-    dispatcher_ = std::make_unique<Dispatcher>(&memtable_);
-    dispatcher_->registerHandler(
-        CommandType::GET, [this](const Request &req) { return memtable_.GET(req); });
-    dispatcher_->registerHandler(
-        CommandType::SET, [this](const Request &req) { return memtable_.SET(req); });
-    dispatcher_->registerHandler(
-        CommandType::DEL, [this](const Request &req) { return memtable_.DEL(req); });
-  });
-
-  LOG_INFO("Storage thread started");
+  LOG_INFO("Storage coordinator started");
 }
 
-void Storage::stop() {
-  if (loop_ != nullptr) {
-    loop_->quit();
+void StorageCoordinator::stop() {
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    stop_ = true;
+  }
+  cv_.notify_all();
+  if (workerThread_.joinable()) {
+    workerThread_.join();
   }
 }
 
-void Storage::handleRequest(const Request& req,
-                             const net::TcpServer::TcpConnectionPtr& conn,
-                             net::EventLoop* ioLoop) {
-  loop_->queueInLoop([this, req, conn, ioLoop]{
+void StorageCoordinator::enqueueTask(std::function<void()> task) {
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    tasks_.push_back(std::move(task));
+  }
+  cv_.notify_one();
+}
+
+void StorageCoordinator::handleRequest(const Request& req,
+                                       const net::TcpServer::TcpConnectionPtr& conn,
+                                       net::EventLoop* ioLoop) {
+  enqueueTask([this, req, conn, ioLoop] {
     pendingRequests_.push_back({req, conn, ioLoop});
     processPendingRequests();
   });
 }
 
-void Storage::initWAL() {
-  loop_->assertInLoopThread();
+void StorageCoordinator::initWAL() {
   LOG_INFO("Recovering from WAL: {}", walPath_.string());
 
-  // 恢复数据到 memtable
   wal::WALReader::Recover(walPath_, memtable_);
 
-  // 初始化 WALWriter
   walWriter_ = std::make_unique<wal::WALWriter>(walPath_);
 
   LOG_INFO("WAL recovery done, storage ready");
 }
 
-void Storage::processPendingRequests() {
-  if (writeInFlight_){
+void StorageCoordinator::workerLoop() {
+  initWAL();
+
+  dispatcher_ = std::make_unique<Dispatcher>(&memtable_);
+  dispatcher_->registerHandler(
+      CommandType::GET, [this](const Request& req) { return memtable_.GET(req); });
+  dispatcher_->registerHandler(
+      CommandType::SET, [this](const Request& req) { return memtable_.SET(req); });
+  dispatcher_->registerHandler(
+      CommandType::DEL, [this](const Request& req) { return memtable_.DEL(req); });
+
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    ready_ = true;
+  }
+  cv_.notify_all();
+
+  for (;;) {
+    std::function<void()> task;
+    {
+      std::unique_lock<std::mutex> lock(mutex_);
+      cv_.wait(lock, [this] { return stop_ || !tasks_.empty(); });
+      if (stop_ && tasks_.empty()) {
+        break;
+      }
+      task = std::move(tasks_.front());
+      tasks_.pop_front();
+    }
+
+    task();
+  }
+
+  LOG_INFO("Storage coordinator stopped");
+}
+
+void StorageCoordinator::processPendingRequests() {
+  if (writeInFlight_) {
     return;
   }
-  while (!pendingRequests_.empty()){
-    if (pendingRequests_.front().request.cmd == CommandType::GET){
+  while (!pendingRequests_.empty()) {
+    if (pendingRequests_.front().request.cmd == CommandType::GET) {
       auto pending = std::move(pendingRequests_.front());
-      pendingRequests_.pop_front(); 
+      pendingRequests_.pop_front();
       executeAndReply(std::move(pending));
       continue;
     }
@@ -89,37 +125,31 @@ void Storage::processPendingRequests() {
   }
 }
 
-void Storage::executeAndReply(PendingRequest pending) {
+void StorageCoordinator::executeAndReply(PendingRequest pending) {
   auto req = pending.request;
   LOG_DEBUG("cmd={} key={}", static_cast<int>(req.cmd), req.key);
 
-  // 执行get操作
   Response rsp = dispatcher_->dispatch(req);
   LOG_DEBUG("response: ok={} value={}", rsp.ok, rsp.value);
 
-  // 编码响应
   std::string rspData = encodeResponse(rsp);
-
-  // 将发送任务投递回 IO 线程
 
   pending.ioLoop->queueInLoop([conn = pending.connection, rspData] { conn->send(rspData); });
 }
 
-void Storage::reply(PendingRequest& pending, const Response& response) {
+void StorageCoordinator::reply(PendingRequest& pending, const Response& response) {
   std::string data = encodeResponse(response);
 
   pending.ioLoop->queueInLoop(
-      [conn = pending.connection, data = std::move(data)]() mutable {
-        conn->send(data);
-      });
+      [conn = pending.connection, data = std::move(data)]() mutable { conn->send(data); });
 }
 
-void Storage::submitWriteBatch() {
+void StorageCoordinator::submitWriteBatch() {
   WriteBatch batch;
 
   while (!pendingRequests_.empty() &&
-     (pendingRequests_.front().request.cmd == CommandType::SET ||
-      pendingRequests_.front().request.cmd == CommandType::DEL) &&
+         (pendingRequests_.front().request.cmd == CommandType::SET ||
+          pendingRequests_.front().request.cmd == CommandType::DEL) &&
          batch.encodedData.size() < 64 * 1024) {
     auto pending = std::move(pendingRequests_.front());
     pendingRequests_.pop_front();
@@ -130,20 +160,21 @@ void Storage::submitWriteBatch() {
 
   writeInFlight_ = true;
   walWriter_->appendBatch(std::move(batch.encodedData),
-      [this, requests = std::move(batch.requests)](bool success) mutable {
-        loop_->queueInLoop([this, requests = std::move(requests), success]() mutable {
-          completeWriteBatch(std::move(requests), success);
-        });
-      });
+                          [this, requests = std::move(batch.requests)](bool success) mutable {
+                            enqueueTask([this, requests = std::move(requests), success]() mutable {
+                              completeWriteBatch(std::move(requests), success);
+                            });
+                          });
 }
 
-void Storage::completeWriteBatch(std::vector<PendingRequest> requests, bool success){
-  for(auto& pending : requests){
+void StorageCoordinator::completeWriteBatch(std::vector<PendingRequest> requests,
+                                            bool success) {
+  for (auto& pending : requests) {
     Response response;
 
-    if (success){
+    if (success) {
       response = dispatcher_->dispatch((pending.request));
-    }else {
+    } else {
       response = {false, "WAL persistence failed"};
     }
 
@@ -154,7 +185,7 @@ void Storage::completeWriteBatch(std::vector<PendingRequest> requests, bool succ
   processPendingRequests();
 }
 
-std::string Storage::encodeLogRecord(const protocol::Request& request){
+std::string StorageCoordinator::encodeLogRecord(const protocol::Request& request) {
   wal::RecordHeader header{};
   header.crc = 0;
   header.key_size = request.key.size();
@@ -168,9 +199,10 @@ std::string Storage::encodeLogRecord(const protocol::Request& request){
   buffer.append(request.key.data(), request.key.size());
   buffer.append(request.value.data(), request.value.size());
 
-  uint32_t crc = util::crc32::Value(buffer.data() + sizeof(uint32_t), buffer.size() - sizeof(uint32_t));
+  uint32_t crc = util::crc32::Value(buffer.data() + sizeof(uint32_t),
+                                    buffer.size() - sizeof(uint32_t));
   std::memcpy(buffer.data(), &crc, sizeof(crc));
-  
+
   return buffer;
 }
 
