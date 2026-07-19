@@ -95,6 +95,11 @@ target_link_libraries(lightkv_kv_server PRIVATE net util)
     )
     target_link_libraries(lightkv_load_test_client PRIVATE net util)
 
+    add_executable(lightkv_simple_test_client
+        tests/simple_test_client.cpp
+    )
+    target_link_libraries(lightkv_simple_test_client PRIVATE net util)
+
     add_executable(lightkv_rbench_client
         tests/rbench_client.cpp
     )
