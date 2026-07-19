@@ -1,6 +1,7 @@
 #include <sys/socket.h>
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cstring>
 #include <iomanip>
@@ -17,6 +18,7 @@ namespace {
 
 constexpr uint8_t kOpGet = 0;
 constexpr uint8_t kOpSet = 1;
+constexpr size_t kPipelineSendChunk = 32 * 1024;
 
 struct Config {
   std::string host{"127.0.0.1"};
@@ -160,7 +162,7 @@ Config parse_args(int argc, char** argv) {
 }
 
 void print_usage() {
-  std::cout << "Usage: ./build/lightkv_simple_test_client --mode smoke|get|set "
+  std::cout << "Usage: ./build/lightkv_simple_test_client --mode smoke|get|set|pipeline "
                "[--host 127.0.0.1] [--port 8990] [--keys 1000] [--requests 1000] "
                "[--threads 4] [--value-size 16]\n";
 }
@@ -272,6 +274,88 @@ bool run_set_load(const Config& cfg) {
   return fail.load() == 0;
 }
 
+bool run_pipeline_set_load(const Config& cfg) {
+  std::vector<std::string> keys;
+  keys.reserve(cfg.keys);
+  for (size_t i = 0; i < cfg.keys; ++i) {
+    keys.push_back("k" + std::to_string(i));
+  }
+
+  std::atomic<uint64_t> ok{0};
+  std::atomic<uint64_t> fail{0};
+
+  auto worker = [&](size_t worker_id, size_t begin, size_t end) {
+    try {
+      net::Socket sock;
+      sock.connect(cfg.host, cfg.port);
+      const int fd = sock.fd();
+      const std::string value(cfg.value_size, 'x');
+      const size_t span = (end > begin) ? (end - begin) : 1;
+
+      std::vector<std::string> requests;
+      requests.reserve(cfg.requests);
+      for (size_t seq = 0; seq < cfg.requests; ++seq) {
+        const size_t key_idx = begin + (seq % span);
+        requests.push_back(build_request(kOpSet, keys[key_idx], value));
+      }
+
+      size_t chunk_bytes = 0;
+      for (const auto& request : requests) {
+        if (chunk_bytes > 0 && chunk_bytes + request.size() > kPipelineSendChunk) {
+          chunk_bytes = 0;
+        }
+        if (!send_all(fd, reinterpret_cast<const uint8_t*>(request.data()), request.size())) {
+          ++fail;
+          return;
+        }
+        chunk_bytes += request.size();
+      }
+
+      for (size_t i = 0; i < requests.size(); ++i) {
+        uint8_t status = 0;
+        std::string response_value;
+        if (!read_response(fd, status, response_value)) {
+          ++fail;
+          return;
+        }
+        if (status == 0xC8) {
+          ++ok;
+        } else {
+          ++fail;
+        }
+      }
+    } catch (const std::exception&) {
+      ++fail;
+    }
+  };
+
+  const auto start = std::chrono::steady_clock::now();
+  std::vector<std::thread> threads;
+  threads.reserve(cfg.threads);
+
+  const size_t per_thread = cfg.keys == 0 ? 1 : std::max<size_t>(1, cfg.keys / cfg.threads);
+  for (size_t i = 0; i < cfg.threads; ++i) {
+    const size_t begin = std::min(cfg.keys, i * per_thread);
+    const size_t end = (i + 1 == cfg.threads) ? cfg.keys : std::min(cfg.keys, begin + per_thread);
+    threads.emplace_back(worker, i, begin, end);
+  }
+
+  for (auto& thread : threads) {
+    thread.join();
+  }
+
+  const auto end = std::chrono::steady_clock::now();
+  const double elapsed = std::chrono::duration<double>(end - start).count();
+  const uint64_t total = ok.load() + fail.load();
+  const double qps = elapsed > 0.0 ? static_cast<double>(total) / elapsed : 0.0;
+
+  std::cout << "done mode=pipeline total=" << total << " ok=" << ok.load()
+            << " fail=" << fail.load() << " elapsed_s=" << std::fixed
+            << std::setprecision(3) << elapsed << " qps=" << std::fixed
+            << std::setprecision(2) << qps << '\n';
+  return fail.load() == 0;
+}
+
 bool run_get_load(const Config& cfg) {
   std::vector<std::string> keys;
   keys.reserve(cfg.keys);
@@ -366,6 +450,9 @@ int main(int argc, char** argv) {
     }
     if (cfg.mode == "set") {
       return run_set_load(cfg) ? 0 : 1;
+    }
+    if (cfg.mode == "pipeline") {
+      return run_pipeline_set_load(cfg) ? 0 : 1;
     }
     if (cfg.mode == "get") {
       return run_get_load(cfg) ? 0 : 1;
