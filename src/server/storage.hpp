@@ -1,5 +1,6 @@
 #pragma once
 
+#include <chrono>
 #include <condition_variable>
 #include <deque>
 #include <filesystem>
@@ -23,8 +24,8 @@ class EventLoop;
 }
 
 namespace server {
-// 存储协调器：串联 I/O、WAL 和 memtable
-class StorageCoordinator {
+// KV 请求处理器：串联 I/O、WAL 和 memtable
+class KvRequestProcessor {
   struct PendingRequest {
     protocol::Request request;
     net::TcpServer::TcpConnectionPtr connection;
@@ -36,9 +37,12 @@ class StorageCoordinator {
     std::vector<PendingRequest> requests;
   };
 
+  using Clock = std::chrono::steady_clock;
+  constexpr static size_t kMaxBatchSize = 64 * 1024;
+  constexpr static auto kCommitWindow = std::chrono::milliseconds(1);
 public:
-  explicit StorageCoordinator(const std::filesystem::path& walPath);
-  ~StorageCoordinator();
+  explicit KvRequestProcessor(const std::filesystem::path& walPath);
+  ~KvRequestProcessor();
 
   void start();
   void stop();
@@ -58,7 +62,11 @@ private:
   void completeWriteBatch(std::vector<PendingRequest> requests, bool success);
   void reply(PendingRequest& pending, const Response& response);
   std::string encodeLogRecord(const protocol::Request& request);
+  bool isWrite(const Request& request) const;
 
+  bool collectingWrites_{false};
+  Clock::time_point commitDeadline_;
+  size_t pendingWriteBytes_{0};
   storage::Memtable memtable_;
   std::unique_ptr<Dispatcher> dispatcher_;
   std::unique_ptr<wal::WALWriter> walWriter_;

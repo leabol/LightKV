@@ -23,13 +23,11 @@ void KvServer::start() {
 
 void KvServer::onMessage(const net::TcpServer::TcpConnectionPtr &conn, net::Buffer &inputBuffer) {
   Request req;
-  if (!parserRequest(inputBuffer, req)) {
-    return;
+  while (parserRequest(inputBuffer, req)) {
+    LOG_DEBUG("cmd={} key={}", static_cast<int>(req.cmd), req.key);
+    // 将请求投递到存储线程处理（IO 线程不直接操作 memtable_）
+    storage_.handleRequest(req, conn, conn->getLoop());
   }
-  LOG_DEBUG("cmd={} key={}", static_cast<int>(req.cmd), req.key);
-
-  // 将请求投递到存储线程处理（IO 线程不直接操作 memtable_）
-  storage_.handleRequest(req, conn, conn->getLoop());
 }
 
 }  // namespace server

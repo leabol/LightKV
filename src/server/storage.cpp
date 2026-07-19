@@ -19,14 +19,14 @@
 
 namespace server {
 
-StorageCoordinator::StorageCoordinator(const std::filesystem::path& walPath)
+KvRequestProcessor::KvRequestProcessor(const std::filesystem::path& walPath)
     : walPath_(walPath) {}
 
-StorageCoordinator::~StorageCoordinator() {
+KvRequestProcessor::~KvRequestProcessor() {
   stop();
 }
 
-void StorageCoordinator::start() {
+void KvRequestProcessor::start() {
   workerThread_ = std::thread([this] { workerLoop(); });
 
   std::unique_lock<std::mutex> lock(mutex_);
@@ -35,7 +35,7 @@ void StorageCoordinator::start() {
   LOG_INFO("Storage coordinator started");
 }
 
-void StorageCoordinator::stop() {
+void KvRequestProcessor::stop() {
   {
     std::lock_guard<std::mutex> lock(mutex_);
     stop_ = true;
@@ -46,7 +46,7 @@ void StorageCoordinator::stop() {
   }
 }
 
-void StorageCoordinator::enqueueTask(std::function<void()> task) {
+void KvRequestProcessor::enqueueTask(std::function<void()> task) {
   {
     std::lock_guard<std::mutex> lock(mutex_);
     tasks_.push_back(std::move(task));
@@ -54,16 +54,21 @@ void StorageCoordinator::enqueueTask(std::function<void()> task) {
   cv_.notify_one();
 }
 
-void StorageCoordinator::handleRequest(const Request& req,
+void KvRequestProcessor::handleRequest(const Request& req,
                                        const net::TcpServer::TcpConnectionPtr& conn,
                                        net::EventLoop* ioLoop) {
   enqueueTask([this, req, conn, ioLoop] {
     pendingRequests_.push_back({req, conn, ioLoop});
+
+    if (isWrite(req)) {
+      pendingWriteBytes_ += sizeof(wal::RecordHeader) + req.key.size() + req.value.size();
+    }
+
     processPendingRequests();
   });
 }
 
-void StorageCoordinator::initWAL() {
+void KvRequestProcessor::initWAL() {
   LOG_INFO("Recovering from WAL: {}", walPath_.string());
 
   wal::WALReader::Recover(walPath_, memtable_);
@@ -73,7 +78,7 @@ void StorageCoordinator::initWAL() {
   LOG_INFO("WAL recovery done, storage ready");
 }
 
-void StorageCoordinator::workerLoop() {
+void KvRequestProcessor::workerLoop() {
   initWAL();
 
   dispatcher_ = std::make_unique<Dispatcher>(&memtable_);
@@ -90,25 +95,41 @@ void StorageCoordinator::workerLoop() {
   }
   cv_.notify_all();
 
-  for (;;) {
+  while(true) {
     std::function<void()> task;
     {
       std::unique_lock<std::mutex> lock(mutex_);
-      cv_.wait(lock, [this] { return stop_ || !tasks_.empty(); });
+      if (collectingWrites_ && !writeInFlight_) {
+        const bool awakenedByTask =
+            cv_.wait_until(lock, commitDeadline_, [this] { return stop_ || !tasks_.empty(); });
+
+        if (!awakenedByTask && collectingWrites_) {
+          collectingWrites_ = false;
+          lock.unlock();
+          submitWriteBatch();
+          continue;
+        }
+      } else {
+        cv_.wait(lock, [this]{ return stop_ || !tasks_.empty(); });
+      }
+
       if (stop_ && tasks_.empty()) {
         break;
       }
-      task = std::move(tasks_.front());
-      tasks_.pop_front();
+      if (!tasks_.empty()){
+        task = std::move(tasks_.front());
+        tasks_.pop_front();
+      }
     }
 
-    task();
+    if (task){
+      task();
+    }
   }
-
   LOG_INFO("Storage coordinator stopped");
 }
 
-void StorageCoordinator::processPendingRequests() {
+void KvRequestProcessor::processPendingRequests() {
   if (writeInFlight_) {
     return;
   }
@@ -120,12 +141,32 @@ void StorageCoordinator::processPendingRequests() {
       continue;
     }
 
-    submitWriteBatch();
+    if (!collectingWrites_) {
+      if (pendingWriteBytes_ >= kMaxBatchSize) {
+        submitWriteBatch();
+        return;
+      }
+
+      collectingWrites_ = true;
+      commitDeadline_ = Clock::now() + kCommitWindow;
+      return;
+    }
+
+    if (pendingWriteBytes_ >= kMaxBatchSize) {
+      collectingWrites_ = false;
+      submitWriteBatch();
+      return;
+    }
+
+    if (Clock::now() >= commitDeadline_) {
+      collectingWrites_ = false;
+      submitWriteBatch();
+    }
     return;
   }
 }
 
-void StorageCoordinator::executeAndReply(PendingRequest pending) {
+void KvRequestProcessor::executeAndReply(PendingRequest pending) {
   auto req = pending.request;
   LOG_DEBUG("cmd={} key={}", static_cast<int>(req.cmd), req.key);
 
@@ -137,25 +178,28 @@ void StorageCoordinator::executeAndReply(PendingRequest pending) {
   pending.ioLoop->queueInLoop([conn = pending.connection, rspData] { conn->send(rspData); });
 }
 
-void StorageCoordinator::reply(PendingRequest& pending, const Response& response) {
+void KvRequestProcessor::reply(PendingRequest& pending, const Response& response) {
   std::string data = encodeResponse(response);
 
   pending.ioLoop->queueInLoop(
       [conn = pending.connection, data = std::move(data)]() mutable { conn->send(data); });
 }
 
-void StorageCoordinator::submitWriteBatch() {
+void KvRequestProcessor::submitWriteBatch() {
   WriteBatch batch;
 
-  while (!pendingRequests_.empty() &&
-         (pendingRequests_.front().request.cmd == CommandType::SET ||
-          pendingRequests_.front().request.cmd == CommandType::DEL) &&
-         batch.encodedData.size() < 64 * 1024) {
+  while (!pendingRequests_.empty() && isWrite(pendingRequests_.front().request) &&
+         batch.encodedData.size() < kMaxBatchSize) {
+          const size_t recordSize = sizeof(wal::RecordHeader) +
+                  pendingRequests_.front().request.key.size() +
+                  pendingRequests_.front().request.value.size();
     auto pending = std::move(pendingRequests_.front());
     pendingRequests_.pop_front();
 
     batch.encodedData += encodeLogRecord(pending.request);
     batch.requests.push_back(std::move(pending));
+
+          pendingWriteBytes_ -= recordSize;
   }
 
   writeInFlight_ = true;
@@ -167,7 +211,7 @@ void StorageCoordinator::submitWriteBatch() {
                           });
 }
 
-void StorageCoordinator::completeWriteBatch(std::vector<PendingRequest> requests,
+void KvRequestProcessor::completeWriteBatch(std::vector<PendingRequest> requests,
                                             bool success) {
   for (auto& pending : requests) {
     Response response;
@@ -185,7 +229,7 @@ void StorageCoordinator::completeWriteBatch(std::vector<PendingRequest> requests
   processPendingRequests();
 }
 
-std::string StorageCoordinator::encodeLogRecord(const protocol::Request& request) {
+std::string KvRequestProcessor::encodeLogRecord(const protocol::Request& request) {
   wal::RecordHeader header{};
   header.crc = 0;
   header.key_size = request.key.size();
@@ -206,4 +250,7 @@ std::string StorageCoordinator::encodeLogRecord(const protocol::Request& request
   return buffer;
 }
 
+bool KvRequestProcessor::isWrite(const Request& request) const {
+  return request.cmd == CommandType::SET || request.cmd == CommandType::DEL;
+}
 }  // namespace server
