@@ -20,7 +20,7 @@ public:
   void setThreadNum(int numThreads);
 
 private:
-  Storage storage_;
+  StorageCoordinator storage_;
   net::TcpServer server_;
 };
 }  // namespace server
