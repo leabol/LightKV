@@ -24,7 +24,7 @@ add_library(net STATIC
     src/protocol/parser.cpp
     src/protocol/codec.cpp
     src/server/kv_server.cpp
-    src/server/storage.cpp
+    src/server/KvRequestProcessor.cpp
     src/net/EventLoopThread.cpp
     src/net/EventLoopThreadPoll.cpp
     src/storage/wal/wal_writer.cpp

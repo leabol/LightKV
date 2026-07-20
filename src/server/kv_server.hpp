@@ -5,7 +5,7 @@
 #include "net/TcpConnection.hpp"
 #include "net/TcpServer.hpp"
 #include "net/buffer.hpp"
-#include "server/storage.hpp"
+#include "server/KvRequestProcessor.hpp"
 
 namespace server {
 

@@ -1,4 +1,4 @@
-#include "server/storage.hpp"
+#include "server/KvRequestProcessor.hpp"
 
 #include <cstring>
 #include <filesystem>
@@ -82,12 +82,12 @@ void KvRequestProcessor::workerLoop() {
   initWAL();
 
   dispatcher_ = std::make_unique<Dispatcher>(&memtable_);
-  dispatcher_->registerHandler(
-      CommandType::GET, [this](const Request& req) { return memtable_.GET(req); });
-  dispatcher_->registerHandler(
-      CommandType::SET, [this](const Request& req) { return memtable_.SET(req); });
-  dispatcher_->registerHandler(
-      CommandType::DEL, [this](const Request& req) { return memtable_.DEL(req); });
+  dispatcher_->registerHandler(CommandType::GET,
+                               [this](const Request& req) { return memtable_.GET(req); });
+  dispatcher_->registerHandler(CommandType::SET,
+                               [this](const Request& req) { return memtable_.SET(req); });
+  dispatcher_->registerHandler(CommandType::DEL,
+                               [this](const Request& req) { return memtable_.DEL(req); });
 
   {
     std::lock_guard<std::mutex> lock(mutex_);
@@ -95,7 +95,7 @@ void KvRequestProcessor::workerLoop() {
   }
   cv_.notify_all();
 
-  while(true) {
+  while (true) {
     std::function<void()> task;
     {
       std::unique_lock<std::mutex> lock(mutex_);
@@ -110,19 +110,19 @@ void KvRequestProcessor::workerLoop() {
           continue;
         }
       } else {
-        cv_.wait(lock, [this]{ return stop_ || !tasks_.empty(); });
+        cv_.wait(lock, [this] { return stop_ || !tasks_.empty(); });
       }
 
       if (stop_ && tasks_.empty()) {
         break;
       }
-      if (!tasks_.empty()){
+      if (!tasks_.empty()) {
         task = std::move(tasks_.front());
         tasks_.pop_front();
       }
     }
 
-    if (task){
+    if (task) {
       task();
     }
   }
