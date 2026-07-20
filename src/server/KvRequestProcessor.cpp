@@ -51,7 +51,7 @@ void KvRequestProcessor::enqueueTask(std::function<void()> task) {
     std::lock_guard<std::mutex> lock(mutex_);
     tasks_.push_back(std::move(task));
   }
-  cv_.notify_one();
+  cv_.notify_all();
 }
 
 void KvRequestProcessor::handleRequest(const Request& req,
@@ -78,9 +78,7 @@ void KvRequestProcessor::initWAL() {
   LOG_INFO("WAL recovery done, storage ready");
 }
 
-void KvRequestProcessor::workerLoop() {
-  initWAL();
-
+void KvRequestProcessor::initDispatcher() {
   dispatcher_ = std::make_unique<Dispatcher>(&memtable_);
   dispatcher_->registerHandler(CommandType::GET,
                                [this](const Request& req) { return memtable_.GET(req); });
@@ -88,12 +86,17 @@ void KvRequestProcessor::workerLoop() {
                                [this](const Request& req) { return memtable_.SET(req); });
   dispatcher_->registerHandler(CommandType::DEL,
                                [this](const Request& req) { return memtable_.DEL(req); });
+}
+
+void KvRequestProcessor::workerLoop() {
+  initWAL();
+  initDispatcher();
 
   {
     std::lock_guard<std::mutex> lock(mutex_);
     ready_ = true;
   }
-  cv_.notify_all();
+  cv_.notify_one();
 
   while (true) {
     std::function<void()> task;
@@ -103,6 +106,7 @@ void KvRequestProcessor::workerLoop() {
         const bool awakenedByTask =
             cv_.wait_until(lock, commitDeadline_, [this] { return stop_ || !tasks_.empty(); });
 
+        // 如果定时器到期，则提交批量写入
         if (!awakenedByTask && collectingWrites_) {
           collectingWrites_ = false;
           lock.unlock();
