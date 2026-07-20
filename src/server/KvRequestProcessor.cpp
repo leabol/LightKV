@@ -19,8 +19,7 @@
 
 namespace server {
 
-KvRequestProcessor::KvRequestProcessor(const std::filesystem::path& walPath)
-    : walPath_(walPath) {}
+KvRequestProcessor::KvRequestProcessor(const std::filesystem::path& walPath) : walPath_(walPath) {}
 
 KvRequestProcessor::~KvRequestProcessor() {
   stop();
@@ -144,7 +143,7 @@ void KvRequestProcessor::processPendingRequests() {
       executeAndReply(std::move(pending));
       continue;
     }
-
+    // 首次进入收集写操作的状态
     if (!collectingWrites_) {
       if (pendingWriteBytes_ >= kMaxBatchSize) {
         submitWriteBatch();
@@ -194,16 +193,16 @@ void KvRequestProcessor::submitWriteBatch() {
 
   while (!pendingRequests_.empty() && isWrite(pendingRequests_.front().request) &&
          batch.encodedData.size() < kMaxBatchSize) {
-          const size_t recordSize = sizeof(wal::RecordHeader) +
-                  pendingRequests_.front().request.key.size() +
-                  pendingRequests_.front().request.value.size();
+    const size_t recordSize = sizeof(wal::RecordHeader) +
+                              pendingRequests_.front().request.key.size() +
+                              pendingRequests_.front().request.value.size();
     auto pending = std::move(pendingRequests_.front());
     pendingRequests_.pop_front();
 
     batch.encodedData += encodeLogRecord(pending.request);
     batch.requests.push_back(std::move(pending));
 
-          pendingWriteBytes_ -= recordSize;
+    pendingWriteBytes_ -= recordSize;
   }
 
   writeInFlight_ = true;
@@ -215,8 +214,7 @@ void KvRequestProcessor::submitWriteBatch() {
                           });
 }
 
-void KvRequestProcessor::completeWriteBatch(std::vector<PendingRequest> requests,
-                                            bool success) {
+void KvRequestProcessor::completeWriteBatch(std::vector<PendingRequest> requests, bool success) {
   for (auto& pending : requests) {
     Response response;
 
@@ -247,8 +245,8 @@ std::string KvRequestProcessor::encodeLogRecord(const protocol::Request& request
   buffer.append(request.key.data(), request.key.size());
   buffer.append(request.value.data(), request.value.size());
 
-  uint32_t crc = util::crc32::Value(buffer.data() + sizeof(uint32_t),
-                                    buffer.size() - sizeof(uint32_t));
+  uint32_t crc =
+      util::crc32::Value(buffer.data() + sizeof(uint32_t), buffer.size() - sizeof(uint32_t));
   std::memcpy(buffer.data(), &crc, sizeof(crc));
 
   return buffer;
