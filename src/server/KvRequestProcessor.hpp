@@ -26,20 +26,21 @@ class EventLoop;
 namespace server {
 // KV 请求处理器：串联 I/O、WAL 和 memtable
 class KvRequestProcessor {
+  //  PendingRequest 结构体用于封装待处理的请求信息，包括请求本身、连接对象和事件循环器指针
   struct PendingRequest {
     protocol::Request request;
     net::TcpServer::TcpConnectionPtr connection;
     net::EventLoop* ioLoop;
   };
-
+  // WriteBatch 结构体用于封装一批待写入 WAL 的请求信息，包括编码后的数据和对应的请求列表
   struct WriteBatch {
     std::string encodedData;
     std::vector<PendingRequest> requests;
   };
-
   using Clock = std::chrono::steady_clock;
-  constexpr static size_t kMaxBatchSize = 64 * 1024;
-  constexpr static auto kCommitWindow = std::chrono::milliseconds(1);
+
+  constexpr static size_t kMaxBatchSize = 64 * 1024;  // 最大批量写入大小为 64KB
+  constexpr static auto kCommitWindow = std::chrono::milliseconds(1); // 提交窗口时间为 1 毫秒
 public:
   explicit KvRequestProcessor(const std::filesystem::path& walPath);
   ~KvRequestProcessor();
@@ -54,6 +55,7 @@ public:
 
 private:
   void initWAL();
+  void initDispatcher();
   void workerLoop();
   void enqueueTask(std::function<void()> task);
   void processPendingRequests();
@@ -64,21 +66,25 @@ private:
   std::string encodeLogRecord(const protocol::Request& request);
   bool isWrite(const Request& request) const;
 
-  bool collectingWrites_{false};
-  Clock::time_point commitDeadline_;
-  size_t pendingWriteBytes_{0};
-  storage::Memtable memtable_;
-  std::unique_ptr<Dispatcher> dispatcher_;
-  std::unique_ptr<wal::WALWriter> walWriter_;
-  std::filesystem::path walPath_;
-  std::thread workerThread_;
-  std::mutex mutex_;
-  std::condition_variable cv_;
-  std::deque<std::function<void()>> tasks_;
+  // 状态标志
   bool stop_{false};
   bool ready_{false};
-  std::deque<PendingRequest> pendingRequests_;
-  bool writeInFlight_{false};
+  bool collectingWrites_{false};  // 是否正在收集写操作
+  bool writeInFlight_{false}; // 是否有写操作正在进行
+
+  Clock::time_point commitDeadline_;  // 收集的写操作的提交截止时间
+  size_t pendingWriteBytes_{0}; // 待处理的写操作的总字节数
+  std::filesystem::path walPath_; // WAL 文件路径
+
+  storage::Memtable memtable_; 
+  std::unique_ptr<Dispatcher> dispatcher_;
+  std::unique_ptr<wal::WALWriter> walWriter_;
+
+  std::thread workerThread_; 
+  std::mutex mutex_;
+  std::condition_variable cv_;
+  std::deque<std::function<void()>> tasks_; // 待处理的任务队列
+  std::deque<PendingRequest> pendingRequests_; // 待处理的请求队列
 };
 
 }  // namespace server
