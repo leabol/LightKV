@@ -6,6 +6,13 @@ include(CTest)
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
+# 默认使用 Debug 编译（带调试信息）
+if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
+    set(CMAKE_BUILD_TYPE Debug CACHE STRING "Build type" FORCE)
+    set_property(CACHE CMAKE_BUILD_TYPE PROPERTY STRINGS
+        "Debug" "Release" "MinSizeRel" "RelWithDebInfo")
+endif()
+
 option(LIGHTKV_BUILD_EXAMPLES "Build LightKV examples" OFF)
 
 set(CMAKE_CXX_STANDARD 17)
@@ -28,6 +35,7 @@ add_library(net STATIC
     src/net/EventLoopThread.cpp
     src/net/EventLoopThreadPoll.cpp
     src/storage/wal/wal_writer.cpp
+    src/storage/memtable/memtable.cpp
 )
 
 target_include_directories(net
@@ -54,6 +62,10 @@ target_include_directories(storage
 
 target_compile_options(net PRIVATE -Wall -Wextra -Wpedantic)
 target_compile_options(util PRIVATE -Wall -Wextra -Wpedantic)
+
+# Debug 模式下添加 -g 生成调试信息
+target_compile_options(net PRIVATE $<$<CONFIG:Debug>:-g>)
+target_compile_options(util PRIVATE $<$<CONFIG:Debug>:-g>)
 
 find_package(Threads REQUIRED)
 find_package(spdlog CONFIG REQUIRED)
