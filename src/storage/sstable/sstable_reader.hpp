@@ -10,6 +10,12 @@
 
 namespace storage::sstable {
 
+struct LookupResult {
+  bool found{false};
+  bool deleted{false};
+  std::string value;
+};
+
 class Reader {
  public:
   explicit Reader(std::filesystem::path path);
@@ -23,6 +29,9 @@ class Reader {
   // 查询 key；删除标记和不存在的 key 都返回 ok=false。
   protocol::Response Get(const std::string& key, std::string* error = nullptr);
 
+  // 查询时区分“不存在”和删除标记，供多层存储合并查询使用。
+  LookupResult Lookup(const std::string& key, std::string* error = nullptr);
+
  private:
   struct LoadedIndexEntry {
     std::string first_key;
@@ -31,7 +40,7 @@ class Reader {
   };
 
   bool ReadBlock(uint64_t offset, uint32_t size, const std::string& key,
-                 protocol::Response* response, std::string* error);
+                 LookupResult* result, std::string* error);
   bool LoadIndex(uint64_t index_offset, uint32_t index_size,
                  std::string* error);
 

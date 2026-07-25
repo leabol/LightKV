@@ -6,9 +6,13 @@
 #include <memory>
 #include <thread>
 #include <condition_variable>
+#include <deque>
+#include <filesystem>
+#include <vector>
 
 #include "protocol/response.hpp"
 #include "protocol/request.hpp"
+#include "storage/sstable/sstable_reader.hpp"
 
 using namespace protocol;
 
@@ -24,27 +28,34 @@ using Storage = std::map<std::string, Entry>;
 constexpr static size_t kMaxMemtableSize = 64 * 1024; // 最大内存表大小为 64KB
 
 public:
+  explicit Memtable(std::filesystem::path sstable_dir = "data/sstable");
+  ~Memtable();
+
+  Memtable(const Memtable&) = delete;
+  Memtable& operator=(const Memtable&) = delete;
+
   //get操作先查询activeStorage_，如果找不到，再查询immutableStorage_，之后在查询sstable_，如果都找不到，则返回not found。
   Response GET(const Request &req);
   Response SET(const Request &req);
   Response DEL(const Request &req);
 
 private:
-  // flush线程的loop函数
-  void flushLoop() {
-  }
-  //当storage_的大小超过kMaxMemtableSize时，可以将其转为immutableStorage_，并创建一个新的storage_，以便继续处理新的写请求。
+  void flushLoop();
+  bool flushToDisk(const std::shared_ptr<Storage>& storage);
+  void switchToImmutableLocked();
+  bool lookupMemoryLocked(const std::string& key, Response* response) const;
 
-  // flush线程被唤醒后，进行flush操作，将immutableStorage_中的数据写入磁盘。
-  void flushToDisk() {
-  } 
-  bool stopFlushThread_{false}; // 用于控制flush线程的停止
-
-  std::mutex mutex_;
+  mutable std::mutex mutex_;
   Storage storage_;
- // 需要一个immutableStorage_队列，用来存储待flush的数据块。每当storage_达到一定大小时，将其转为immutableStorage_，并创建一个新的storage_。;
-  std::mutex flush_mutex_;
+  std::deque<std::shared_ptr<Storage>> immutable_storages_;
+  std::shared_ptr<Storage> flushing_storage_;
+
+  std::filesystem::path sstable_dir_;
+  uint64_t next_sstable_id_{0};
+  std::vector<std::unique_ptr<sstable::Reader>> sstables_;
+
+  bool stopFlushThread_{false};
   std::condition_variable flush_cv_;
   std::thread flushThread_;
 };
-}// namespace storage
+}  // namespace storage

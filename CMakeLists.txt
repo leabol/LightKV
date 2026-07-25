@@ -135,3 +135,15 @@ target_link_libraries(lightkv_kv_server PRIVATE net util)
     )
     target_link_libraries(lightkv_sstable_test PRIVATE net util)
     add_test(NAME lightkv_sstable_test COMMAND lightkv_sstable_test)
+
+    add_executable(lightkv_memtable_sstable_test
+        tests/memtable_sstable_test.cpp
+    )
+    target_link_libraries(lightkv_memtable_sstable_test PRIVATE net util)
+    add_test(NAME lightkv_memtable_sstable_test COMMAND lightkv_memtable_sstable_test)
+
+    add_executable(lightkv_server_e2e_test
+        tests/server_e2e_test.cpp
+    )
+    target_link_libraries(lightkv_server_e2e_test PRIVATE net util)
+    add_test(NAME lightkv_server_e2e_test COMMAND lightkv_server_e2e_test)
