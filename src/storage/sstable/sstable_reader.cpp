@@ -136,7 +136,7 @@ bool ReadBlockPayload(const std::string& block, std::string* payload,
 }
 
 bool FindEntry(const std::string& payload, const std::string& key,
-               protocol::Response* response, std::string* error) {
+               LookupResult* result, std::string* error) {
   size_t position = 0;
   while (position < payload.size()) {
     uint32_t key_size = 0;
@@ -160,13 +160,17 @@ bool FindEntry(const std::string& payload, const std::string& key,
     position += value_size;
 
     if (entry_key == key) {
-      if (type == value_type::deletion) return true;
+      if (type == value_type::deletion) {
+        result->found = true;
+        result->deleted = true;
+        return true;
+      }
       if (type != value_type::value) {
         if (error != nullptr) *error = "unknown SSTable value type";
         return false;
       }
-      response->ok = true;
-      response->value = std::move(value);
+      result->found = true;
+      result->value = std::move(value);
       return true;
     }
     if (entry_key > key) return true;
@@ -199,26 +203,32 @@ bool Reader::Open(std::string* error) {
 }
 
 protocol::Response Reader::Get(const std::string& key, std::string* error) {
-  protocol::Response response{false, {}};
+  const auto result = Lookup(key, error);
+  if (!result.found || result.deleted) return {false, {}};
+  return {true, result.value};
+}
+
+LookupResult Reader::Lookup(const std::string& key, std::string* error) {
+  LookupResult result;
   if (!file_.is_open()) {
     if (error != nullptr) *error = "SSTable is not open";
-    return response;
+    return result;
   }
-  if (index_.empty()) return response;
+  if (index_.empty()) return result;
 
   auto it = std::upper_bound(
       index_.begin(), index_.end(), key,
       [](const std::string& value, const LoadedIndexEntry& item) {
         return value < item.first_key;
       });
-  if (it == index_.begin()) return response;
+  if (it == index_.begin()) return result;
   --it;
-  ReadBlock(it->block_offset, it->block_size, key, &response, error);
-  return response;
+  ReadBlock(it->block_offset, it->block_size, key, &result, error);
+  return result;
 }
 
 bool Reader::ReadBlock(uint64_t offset, uint32_t size, const std::string& key,
-                       protocol::Response* response, std::string* error) {
+                       LookupResult* result, std::string* error) {
   if (size < kBlockHeaderSize) {
     if (error != nullptr) *error = "invalid SSTable block size";
     return false;
@@ -231,7 +241,7 @@ bool Reader::ReadBlock(uint64_t offset, uint32_t size, const std::string& key,
 
   std::string payload;
   return ReadBlockPayload(block, &payload, error) &&
-         FindEntry(payload, key, response, error);
+      FindEntry(payload, key, result, error);
 }
 
 }  // namespace storage::sstable
