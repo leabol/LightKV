@@ -36,6 +36,8 @@ add_library(net STATIC
     src/net/EventLoopThreadPoll.cpp
     src/storage/wal/wal_writer.cpp
     src/storage/memtable/memtable.cpp
+    src/storage/sstable/sstable_builder.cpp
+    src/storage/sstable/sstable_reader.cpp
 )
 
 target_include_directories(net
@@ -127,3 +129,9 @@ target_link_libraries(lightkv_kv_server PRIVATE net util)
     )
     target_link_libraries(lightkv_wal_test PRIVATE net util)
     add_test(NAME lightkv_wal_test COMMAND lightkv_wal_test)
+
+    add_executable(lightkv_sstable_test
+        tests/sstable_test.cpp
+    )
+    target_link_libraries(lightkv_sstable_test PRIVATE net util)
+    add_test(NAME lightkv_sstable_test COMMAND lightkv_sstable_test)
