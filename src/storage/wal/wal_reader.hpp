@@ -33,7 +33,9 @@ public:
 
   // 读取下一条记录，失败或EOF返回false
   bool next(LogRecord& record) {
-    if (!valid_) return false;
+    if (!valid_) {
+      return false;
+    }
 
     // 读取header
     RecordHeader header{};
@@ -47,7 +49,7 @@ public:
     // 读取key和value
     size_t data_size = key_size + value_size;
     std::string data(data_size, '\0');
-    if (data_size > 0 && !readExact(&data[0], data_size)) {
+    if (data_size > 0 && !readExact(data.data(), data_size)) {
       LOG_WARN("WAL truncated record: key_size={} value_size={}", key_size, value_size);
       return false;
     }
@@ -78,7 +80,9 @@ public:
   // 从WAL文件恢复Memtable
   static void Recover(const std::filesystem::path& walPath, storage::Memtable& memtable) {
     WALReader reader(walPath);
-    if (!reader.valid_) return;
+    if (!reader.valid_) {
+      return;
+    }
 
     size_t count = 0;
     LogRecord record;
@@ -98,11 +102,13 @@ public:
   }
 
 private:
-  bool readExact(void* buf, size_t len) {
+  bool readExact(void* buf, size_t len) const {
     size_t received = 0;
     while (received < len) {
       ssize_t n = ::read(fd_, static_cast<char*>(buf) + received, len - received);
-      if (n <= 0) return false;
+      if (n <= 0) {
+        return false;
+      }
       received += n;
     }
     return true;

@@ -25,7 +25,7 @@ struct Entry {
 };
 using Storage = std::map<std::string, Entry>;
 
-constexpr static size_t kMaxMemtableSize = 64 * 1024; // 最大内存表大小为 64KB
+constexpr static size_t kMaxMemtableSize = 64UL * 1024UL; // 最大内存表大小为 64KB
 
 public:
   explicit Memtable(std::filesystem::path sstable_dir = "data/sstable");
@@ -33,6 +33,8 @@ public:
 
   Memtable(const Memtable&) = delete;
   Memtable& operator=(const Memtable&) = delete;
+  Memtable(Memtable&&) = delete;
+  Memtable& operator=(Memtable&&) = delete;
 
   //get操作先查询activeStorage_，如果找不到，再查询immutableStorage_，之后在查询sstable_，如果都找不到，则返回not found。
   Response GET(const Request &req);

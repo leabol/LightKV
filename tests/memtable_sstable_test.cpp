@@ -11,7 +11,7 @@ int main() {
 
   {
     storage::Memtable memtable(directory);
-    for (size_t i = 0; i < 64 * 1024; ++i) {
+    for (size_t i = 0; i < 64UL * 1024UL; ++i) {
       protocol::Request request{protocol::CommandType::SET,
                                 "key-" + std::to_string(i),
                                 "value-" + std::to_string(i)};
