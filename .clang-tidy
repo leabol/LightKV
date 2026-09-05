@@ -1,0 +1,17 @@
+---
+# 选择性禁用 clang-tidy 风格警告，保留重要的 bug 检测
+Checks: >
+  -*,
+  bugprone-*,
+  performance-*,
+  portability-*,
+  -bugprone-easily-swappable-parameters,
+  -bugprone-narrowing-conversions,
+  -bugprone-not-null-terminated,
+  -performance-enum-size
+
+CheckOptions:
+  - key:   readability-identifier-length.MinimumVariableNameLength
+    value: '1'
+  - key:   readability-identifier-length.MinimumParameterNameLength
+    value: '1'

@@ -39,7 +39,9 @@ bool SendAll(int fd, const std::string& data) {
   size_t sent = 0;
   while (sent < data.size()) {
     const ssize_t count = send(fd, data.data() + sent, data.size() - sent, 0);
-    if (count <= 0) return false;
+    if (count <= 0) {
+      return false;
+    }
     sent += static_cast<size_t>(count);
   }
   return true;
@@ -50,7 +52,9 @@ bool ReceiveAll(int fd, void* buffer, size_t size) {
   size_t received = 0;
   while (received < size) {
     const ssize_t count = recv(fd, output + received, size - received, 0);
-    if (count <= 0) return false;
+    if (count <= 0) {
+      return false;
+    }
     received += static_cast<size_t>(count);
   }
   return true;
@@ -75,13 +79,17 @@ std::string MakeRequest(uint8_t command, const std::string& key,
 
 bool ReadResponse(int fd, uint8_t* status, std::string* value) {
   uint8_t header[8];
-  if (!ReceiveAll(fd, header, sizeof(header))) return false;
+  if (!ReceiveAll(fd, header, sizeof(header))) {
+    return false;
+  }
   const uint32_t total_size = (static_cast<uint32_t>(header[0]) << 24) |
                               (static_cast<uint32_t>(header[1]) << 16) |
                               (static_cast<uint32_t>(header[2]) << 8) |
                               header[3];
   const uint32_t value_size = ReadU24(header + 5);
-  if (total_size != value_size + sizeof(header)) return false;
+  if (total_size != value_size + sizeof(header)) {
+    return false;
+  }
   *status = header[4];
   value->assign(value_size, '\0');
   return value_size == 0 || ReceiveAll(fd, value->data(), value_size);
@@ -89,7 +97,9 @@ bool ReadResponse(int fd, uint8_t* status, std::string* value) {
 
 int ConnectToServer() {
   const int fd = socket(AF_INET, SOCK_STREAM, 0);
-  if (fd < 0) return -1;
+  if (fd < 0) {
+    return -1;
+  }
 
   timeval timeout{2, 0};
   setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
@@ -121,16 +131,22 @@ bool WaitForServer() {
 pid_t StartServer(const std::filesystem::path& executable,
                   const std::filesystem::path& working_directory) {
   const pid_t pid = fork();
-  if (pid != 0) return pid;
+  if (pid != 0) {
+    return pid;
+  }
 
-  if (chdir(working_directory.c_str()) != 0) _exit(126);
+  if (chdir(working_directory.c_str()) != 0) {
+    _exit(126);
+  }
   const std::string port = std::to_string(kPort);
   execl(executable.c_str(), executable.c_str(), port.c_str(), nullptr);
   _exit(127);
 }
 
 bool StopServer(pid_t pid) {
-  if (pid <= 0) return false;
+  if (pid <= 0) {
+    return false;
+  }
   kill(pid, SIGTERM);
   int status = 0;
   return waitpid(pid, &status, 0) == pid;
@@ -139,7 +155,9 @@ bool StopServer(pid_t pid) {
 bool CheckRequest(int fd, uint8_t command, const std::string& key,
                   const std::string& value, uint8_t expected_status,
                   const std::string& expected_value) {
-  if (!SendAll(fd, MakeRequest(command, key, value))) return false;
+  if (!SendAll(fd, MakeRequest(command, key, value))) {
+    return false;
+  }
   uint8_t status = 0;
   std::string response;
   return ReadResponse(fd, &status, &response) &&
@@ -149,7 +167,9 @@ bool CheckRequest(int fd, uint8_t command, const std::string& key,
 }  // namespace
 
 int main(int argc, char** argv) {
-  if (argc < 1) return 1;
+  if (argc < 1) {
+    return 1;
+  }
   const auto executable = std::filesystem::absolute(argv[0]).parent_path() /
                           "lightkv_kv_server";
   const auto working_directory = std::filesystem::temp_directory_path() /
@@ -167,9 +187,13 @@ int main(int argc, char** argv) {
              CheckRequest(fd, kGet, "network-key", "", kOk, "network-value") &&
              CheckRequest(fd, kDel, "network-key", "", kOk, "") &&
              CheckRequest(fd, kGet, "network-key", "", 0, "");
-    if (fd >= 0) close(fd);
+    if (fd >= 0) {
+      close(fd);
+    }
   }
-  if (server > 0) StopServer(server);
+  if (server > 0) {
+    StopServer(server);
+  }
 
   server = StartServer(executable, working_directory);
   passed = passed && server > 0 && WaitForServer();
@@ -177,9 +201,13 @@ int main(int argc, char** argv) {
     const int fd = ConnectToServer();
     passed = fd >= 0 &&
              CheckRequest(fd, kGet, "network-key", "", 0, "");
-    if (fd >= 0) close(fd);
+    if (fd >= 0) {
+      close(fd);
+    }
   }
-  if (server > 0) StopServer(server);
+  if (server > 0) {
+    StopServer(server);
+  }
 
   std::filesystem::remove_all(working_directory);
   if (!passed) {

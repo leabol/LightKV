@@ -22,6 +22,8 @@ class Reader {
 
   Reader(const Reader&) = delete;
   Reader& operator=(const Reader&) = delete;
+  Reader(Reader&&) = delete;
+  Reader& operator=(Reader&&) = delete;
 
   // 打开并读取 SSTable 的索引。
   bool Open(std::string* error = nullptr);

@@ -88,8 +88,7 @@ Response Memtable::DEL(const Request &req) {
   return {true, ""};
 }
 
-bool Memtable::lookupMemoryLocked(const std::string& key,
-                                  Response* response) const {
+bool Memtable::lookupMemoryLocked(const std::string& key, Response* response) const {
   const auto it = storage_.find(key);
   if (it == storage_.end()) {
     return false;
