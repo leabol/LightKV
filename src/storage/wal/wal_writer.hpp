@@ -3,11 +3,13 @@
 #include <deque>
 #include <filesystem>
 #include <functional>
+#include <memory>
 #include <mutex>
 #include <string>
 #include <thread>
 
 #include "storage/wal/log_record.hpp"
+#include "server/KvRequestProcessor.hpp"
 
 namespace wal {
 class WALWriter {
@@ -15,7 +17,7 @@ public:
   using CompletionCallback = std::function<void(bool)>;
 
   struct WALTask {
-    std::string data;
+    std::shared_ptr<std::deque<server::PendingRequest>> pendingRequestsPtr;
     CompletionCallback completion;
   };
 
@@ -27,7 +29,7 @@ public:
 
   void append(const LogRecord& record);
   void appendBatch(std::string data, CompletionCallback callback);
-
+  void appendRequests(std::shared_ptr<std::deque<server::PendingRequest>> pendingRequestsPtr, CompletionCallback cb);
 private:
   void writeLoop();
 

@@ -9,7 +9,6 @@
 #include <mutex>
 #include <string>
 #include <thread>
-#include <vector>
 
 #include "net/TcpConnection.hpp"
 #include "net/TcpServer.hpp"
@@ -17,26 +16,24 @@
 #include "protocol/response.hpp"
 #include "server/dispatcher.hpp"
 #include "storage/memtable/memtable.hpp"
-#include "storage/wal/wal_writer.hpp"
 
 namespace net {
 class EventLoop;
 }
+namespace  wal {
+class WALWriter;
+}
 
 namespace server {
+//  PendingRequest 结构体用于封装待处理的请求信息，包括请求本身、连接对象和事件循环器指针
+struct PendingRequest {
+  protocol::Request request;
+  net::TcpServer::TcpConnectionPtr connection;
+  net::EventLoop* ioLoop;
+};
 // KV 请求处理器：串联 I/O、WAL 和 memtable
 class KvRequestProcessor {
-  //  PendingRequest 结构体用于封装待处理的请求信息，包括请求本身、连接对象和事件循环器指针
-  struct PendingRequest {
-    protocol::Request request;
-    net::TcpServer::TcpConnectionPtr connection;
-    net::EventLoop* ioLoop;
-  };
-  // WriteBatch 结构体用于封装一批待写入 WAL 的请求信息，包括编码后的数据和对应的请求列表
-  struct WriteBatch {
-    std::string encodedData;
-    std::vector<PendingRequest> requests;
-  };
+
   using Clock = std::chrono::steady_clock;
 
   constexpr static size_t kMaxBatchSize = 64 * 1024;  // 最大批量写入大小为 64KB
@@ -61,7 +58,7 @@ private:
   void processPendingRequests();
   void executeAndReply(PendingRequest pending);
   void submitWriteBatch();
-  void completeWriteBatch(std::vector<PendingRequest> requests, bool success);
+  void completeWriteBatch(const std::shared_ptr<std::deque<server::PendingRequest>> &pendingRequestsPtr, bool success);
   void reply(PendingRequest& pending, const Response& response);
   std::string encodeLogRecord(const protocol::Request& request);
   bool isWrite(const Request& request) const;

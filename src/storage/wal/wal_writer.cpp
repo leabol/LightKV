@@ -5,29 +5,16 @@
 #include <fcntl.h>
 #include <unistd.h>
 
+#include "protocol/request.hpp"
+#include "storage/wal/log_record.hpp"
 #include "util/Log.hpp"
 #include "util/crc32.hpp"
 
 namespace wal {
 namespace {
 
-bool writeAll(int fd, const char* data, size_t size) {
-  size_t written = 0;
-  while (written < size) {
-    const ssize_t result = ::write(fd, data + written, size - written);
-    if (result > 0) {
-      written += static_cast<size_t>(result);
-      continue;
-    }
-    if (result < 0 && errno == EINTR) {
-      continue;
-    }
-    return false;
-  }
-  return true;
-}
-
-std::string encodeRecord(const LogRecord& record) {
+std::string encodeRecord(const protocol::Request& req) {
+  LogRecord record{wal::RecordType(req.cmd), req.key, req.value};
   RecordHeader header{};
   header.key_size = record.key.size();
   header.value_size = record.value.size();
@@ -43,6 +30,27 @@ std::string encodeRecord(const LogRecord& record) {
       buffer.data() + sizeof(uint32_t), buffer.size() - sizeof(uint32_t));
   std::memcpy(buffer.data(), &crc, sizeof(crc));
   return buffer;
+}
+
+bool writeAll(int fd,const WALWriter::WALTask &task) {
+  std::string writeBatch;
+  for (const auto & pending : *task.pendingRequestsPtr){
+    writeBatch += encodeRecord(pending.request);
+  }
+  size_t written = 0;
+  size_t total_size = writeBatch.size();
+  while (written < total_size) {
+    const ssize_t result = ::write(fd, writeBatch.data() + written, total_size - written);
+    if (result > 0) {
+      written += static_cast<size_t>(result);
+      continue;
+    }
+    if (result < 0 && errno == EINTR) {
+      continue;
+    }
+    return false;
+  }
+  return true;
 }
 
 }  // namespace
@@ -72,16 +80,13 @@ WALWriter::~WALWriter() {
   }
 }
 
-void WALWriter::append(const LogRecord& record) {
-  appendBatch(encodeRecord(record), [](bool) {});
-}
 
-void WALWriter::appendBatch(std::string data, CompletionCallback callback) {
+void WALWriter::appendRequests(std::shared_ptr<std::deque<server::PendingRequest>> pendingRequestsPtr, CompletionCallback callback) {
   bool accepted = false;
   {
     std::lock_guard lock(mtx_);
     if (fd_ >= 0 && !stop_) {
-      tasks_.push_back({std::move(data), std::move(callback)});
+      tasks_.push_back({std::move(pendingRequestsPtr), std::move(callback)});
       accepted = true;
     }
   }
@@ -109,7 +114,7 @@ void WALWriter::writeLoop() {
       tasks_.pop_front();
     }
 
-    bool success = writeAll(fd_, task.data.data(), task.data.size());
+    bool success = writeAll(fd_, task);
     if (success) {
       success = ::fdatasync(fd_) == 0;
     }
