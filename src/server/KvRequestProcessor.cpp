@@ -4,7 +4,6 @@
 #include <filesystem>
 #include <memory>
 #include <utility>
-#include <vector>
 
 #include "net/EventLoop.hpp"
 #include "net/TcpConnection.hpp"
@@ -15,7 +14,6 @@
 #include "storage/wal/wal_reader.hpp"
 #include "storage/wal/wal_writer.hpp"
 #include "util/Log.hpp"
-#include "util/crc32.hpp"
 
 namespace server {
 
@@ -185,33 +183,21 @@ void KvRequestProcessor::reply(PendingRequest& pending, const Response& response
 }
 
 void KvRequestProcessor::submitWriteBatch() {
-  WriteBatch batch;
-
-  while (!pendingRequests_.empty() && isWrite(pendingRequests_.front().request) &&
-         batch.encodedData.size() < kMaxBatchSize) {
-    const size_t recordSize = sizeof(wal::RecordHeader) +
-                              pendingRequests_.front().request.key.size() +
-                              pendingRequests_.front().request.value.size();
-    auto pending = std::move(pendingRequests_.front());
-    pendingRequests_.pop_front();
-
-    batch.encodedData += encodeLogRecord(pending.request);
-    batch.requests.push_back(std::move(pending));
-
-    pendingWriteBytes_ -= recordSize;
-  }
-
+  auto pendingRequestsPtr = std::make_shared<std::deque<PendingRequest>>(std::move(pendingRequests_));
+  pendingRequests_.clear();
   writeInFlight_ = true;
-  walWriter_->appendBatch(std::move(batch.encodedData),
-                          [this, requests = std::move(batch.requests)](bool success) mutable {
-                            enqueueTask([this, requests = std::move(requests), success]() mutable {
-                              completeWriteBatch(std::move(requests), success);
-                            });
-                          });
+  
+  auto callback = [this, ptr = pendingRequestsPtr](bool success) mutable {
+    enqueueTask([this, ptr = std::move(ptr), success]() mutable {
+      completeWriteBatch(ptr, success);
+    });
+  };
+
+  walWriter_->appendRequests(pendingRequestsPtr, std::move(callback));
 }
 
-void KvRequestProcessor::completeWriteBatch(std::vector<PendingRequest> requests, bool success) {
-  for (auto& pending : requests) {
+void KvRequestProcessor::completeWriteBatch(const std::shared_ptr<std::deque<server::PendingRequest>> &pendingRequestsPtr, bool success) {
+  for (auto& pending : *pendingRequestsPtr) {
     Response response;
 
     if (success) {
@@ -227,26 +213,6 @@ void KvRequestProcessor::completeWriteBatch(std::vector<PendingRequest> requests
   processPendingRequests();
 }
 
-std::string KvRequestProcessor::encodeLogRecord(const protocol::Request& request) {
-  wal::RecordHeader header{};
-  header.crc = 0;
-  header.key_size = request.key.size();
-  header.value_size = request.value.size();
-  header.type = static_cast<uint8_t>(wal::FromCommandType(request.cmd));
-
-  size_t total_size = sizeof(header) + request.key.size() + request.value.size();
-  std::string buffer;
-  buffer.reserve(total_size);
-  buffer.append(reinterpret_cast<const char*>(&header), sizeof(header));
-  buffer.append(request.key.data(), request.key.size());
-  buffer.append(request.value.data(), request.value.size());
-
-  uint32_t crc =
-      util::crc32::Value(buffer.data() + sizeof(uint32_t), buffer.size() - sizeof(uint32_t));
-  std::memcpy(buffer.data(), &crc, sizeof(crc));
-
-  return buffer;
-}
 
 bool KvRequestProcessor::isWrite(const Request& request) const {
   return request.cmd == CommandType::SET || request.cmd == CommandType::DEL;
