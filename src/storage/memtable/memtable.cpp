@@ -101,6 +101,7 @@ bool Memtable::lookupMemoryLocked(const std::string& key, Response* response) co
   return true;
 }
 
+// 必须在持有mutex_锁的情况下调用
 void Memtable::switchToImmutableLocked() {
   auto immutable = std::make_shared<Storage>(std::move(storage_));
   storage_.clear();
@@ -158,7 +159,7 @@ void Memtable::flushLoop() {
       if (!success) {
         immutable_storages_.push_front(std::move(immutable));
         if (stopFlushThread_) {
-          return;
+          return;// to-do: 如果队列不空，应该继续尝试刷新，直到队列为空
         }
       }
       flushing_storage_.reset();

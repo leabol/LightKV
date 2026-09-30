@@ -57,12 +57,14 @@ void KvRequestProcessor::handleRequest(const Request& req,
                                        const net::TcpServer::TcpConnectionPtr& conn,
                                        net::EventLoop* ioLoop) {
   enqueueTask([this, req, conn, ioLoop] {
-    pendingRequests_.push_back({req, conn, ioLoop});
-
-    if (isWrite(req)) {
-      pendingWriteBytes_ += sizeof(wal::RecordHeader) + req.key.size() + req.value.size();
+    // 如果是读请求，直接执行并回复
+    if (!isWrite(req)) {
+      executeAndReply({req, conn, ioLoop});
+      return;
     }
-
+    // 如果是写请求，加入待处理队列
+    pendingRequests_.push_back({req, conn, ioLoop});
+    pendingWriteBytes_ += sizeof(wal::RecordHeader) + req.key.size() + req.value.size();
     processPendingRequests();
   });
 }
@@ -136,13 +138,7 @@ void KvRequestProcessor::processPendingRequests() {
   if (writeInFlight_) {
     return;
   }
-  while (!pendingRequests_.empty()) {
-    if (pendingRequests_.front().request.cmd == CommandType::GET) {
-      auto pending = std::move(pendingRequests_.front());
-      pendingRequests_.pop_front();
-      executeAndReply(std::move(pending));
-      continue;
-    }
+  if (!pendingRequests_.empty()) {
     // 首次进入收集写操作的状态
     if (!collectingWrites_) {
       if (pendingWriteBytes_ >= kMaxBatchSize) {
