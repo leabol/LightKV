@@ -186,7 +186,8 @@ void KvRequestProcessor::submitWriteBatch() {
   auto pendingRequestsPtr = std::make_shared<std::deque<PendingRequest>>(std::move(pendingRequests_));
   pendingRequests_.clear();
   writeInFlight_ = true;
-  
+  pendingWriteBytes_ = 0;
+
   auto callback = [this, ptr = pendingRequestsPtr](bool success) mutable {
     enqueueTask([this, ptr = std::move(ptr), success]() mutable {
       completeWriteBatch(ptr, success);
