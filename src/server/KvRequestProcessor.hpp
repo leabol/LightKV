@@ -16,6 +16,7 @@
 #include "protocol/response.hpp"
 #include "server/dispatcher.hpp"
 #include "storage/memtable/memtable.hpp"
+#include "server/server_def.hpp"
 
 namespace net {
 class EventLoop;
@@ -25,12 +26,7 @@ class WALWriter;
 }
 
 namespace server {
-//  PendingRequest 结构体用于封装待处理的请求信息，包括请求本身、连接对象和事件循环器指针
-struct PendingRequest {
-  protocol::Request request;
-  net::TcpServer::TcpConnectionPtr connection;
-  net::EventLoop* ioLoop;
-};
+
 // KV 请求处理器：串联 I/O、WAL 和 memtable
 class KvRequestProcessor {
 

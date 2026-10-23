@@ -32,6 +32,7 @@ add_library(net STATIC
     src/protocol/codec.cpp
     src/server/kv_server.cpp
     src/server/KvRequestProcessor.cpp
+    src/server/request_processor.cpp
     src/net/EventLoopThread.cpp
     src/net/EventLoopThreadPoll.cpp
     src/storage/wal/wal_writer.cpp
@@ -147,3 +148,9 @@ target_link_libraries(lightkv_kv_server PRIVATE net util)
     )
     target_link_libraries(lightkv_server_e2e_test PRIVATE net util)
     add_test(NAME lightkv_server_e2e_test COMMAND lightkv_server_e2e_test)
+
+    add_executable(lightkv_request_processor_test
+        tests/request_processor_test.cpp
+    )
+    target_link_libraries(lightkv_request_processor_test PRIVATE net util)
+    add_test(NAME lightkv_request_processor_test COMMAND lightkv_request_processor_test)
