@@ -20,7 +20,11 @@ public:
   void start();
   void stop();
   void handleRequest(PendingRequest& request);
+  void handleGroupRequest(std::deque<PendingRequest>& requests);
 
+  storage::Memtable& getMemtable(){
+    return memtable_;
+  }
 private:
   void processLoop();
   void initDispatcher();

@@ -8,14 +8,12 @@
 #include <memory>
 #include <mutex>
 #include <string>
+#include <queue>
 #include <thread>
 
 #include "net/TcpConnection.hpp"
 #include "net/TcpServer.hpp"
 #include "protocol/request.hpp"
-#include "protocol/response.hpp"
-#include "server/dispatcher.hpp"
-#include "storage/memtable/memtable.hpp"
 #include "server/server_def.hpp"
 
 namespace net {
@@ -26,7 +24,6 @@ class WALWriter;
 }
 
 namespace server {
-
 // KV 请求处理器：串联 I/O、WAL 和 memtable
 class KvRequestProcessor {
 
@@ -35,16 +32,22 @@ class KvRequestProcessor {
   constexpr static size_t kMaxBatchSize = 64 * 1024;  // 最大批量写入大小为 64KB
   constexpr static auto kCommitWindow = std::chrono::milliseconds(1); // 提交窗口时间为 1 毫秒
 public:
-  explicit KvRequestProcessor(const std::filesystem::path& walPath);
+  KvRequestProcessor();
   ~KvRequestProcessor();
 
   void start();
   void stop();
 
   // 线程安全：可从任意线程调用
-  void handleRequest(const Request& req,
+  void handleRequest(const protocol::Request& req,
                      const net::TcpServer::TcpConnectionPtr& conn,
                      net::EventLoop* ioLoop);
+
+  void submitWriteReq(PendingRequest& pending);
+
+  void setWALWriter(wal::WALWriter* walWriter){
+    walWriter_ = walWriter;
+  }
 
 private:
   void initWAL();
@@ -55,9 +58,9 @@ private:
   void executeAndReply(PendingRequest pending);
   void submitWriteBatch();
   void completeWriteBatch(const std::shared_ptr<std::deque<server::PendingRequest>> &pendingRequestsPtr, bool success);
-  void reply(PendingRequest& pending, const Response& response);
+  // void reply(PendingRequest& pending, const Response& response);
   std::string encodeLogRecord(const protocol::Request& request);
-  bool isWrite(const Request& request) const;
+  bool isWrite(const protocol::Request& request) const;
 
   // 状态标志
   bool stop_{false};
@@ -69,9 +72,11 @@ private:
   size_t pendingWriteBytes_{0}; // 待处理的写操作的总字节数
   std::filesystem::path walPath_; // WAL 文件路径
 
-  storage::Memtable memtable_; 
-  std::unique_ptr<Dispatcher> dispatcher_;
-  std::unique_ptr<wal::WALWriter> walWriter_;
+  wal::WALWriter* walWriter_;
+  std::mutex mtx_;
+  std::condition_variable cvWAL_;
+  std::queue<PendingRequest> writeRequests_;
+
 
   std::thread workerThread_; 
   std::mutex mutex_;

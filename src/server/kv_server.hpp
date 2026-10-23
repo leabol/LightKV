@@ -6,6 +6,8 @@
 #include "net/TcpServer.hpp"
 #include "net/buffer.hpp"
 #include "server/KvRequestProcessor.hpp"
+#include "server/request_processor.hpp"
+#include "storage/wal/wal_writer.hpp"
 
 namespace server {
 
@@ -15,12 +17,18 @@ public:
 
   // Start listening
   void start();
-
+  void initWAL();
   void onMessage(const net::TcpServer::TcpConnectionPtr& conn, net::Buffer& inputBuffer);
   void setThreadNum(int numThreads);
-
+   std::unique_ptr<wal::WALWriter>& getWALWriter(){
+    return walWriter_;
+   }
 private:
+  std::unique_ptr<wal::WALWriter> walWriter_;
   KvRequestProcessor storage_;
+  RequestProcessor reqProcessor_;
   net::TcpServer server_;
+
+  std::filesystem::path walPath_; // WAL 文件路径
 };
 }  // namespace server

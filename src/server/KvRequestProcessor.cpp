@@ -1,23 +1,20 @@
 #include "server/KvRequestProcessor.hpp"
 
 #include <cstring>
-#include <filesystem>
 #include <memory>
 #include <utility>
+#include <pthread.h>
 
 #include "net/EventLoop.hpp"
 #include "net/TcpConnection.hpp"
-#include "protocol/codec.hpp"
 #include "protocol/request.hpp"
-#include "protocol/response.hpp"
 #include "storage/wal/log_record.hpp"
-#include "storage/wal/wal_reader.hpp"
 #include "storage/wal/wal_writer.hpp"
 #include "util/Log.hpp"
 
 namespace server {
 
-KvRequestProcessor::KvRequestProcessor(const std::filesystem::path& walPath) : walPath_(walPath) {}
+KvRequestProcessor::KvRequestProcessor(){}
 
 KvRequestProcessor::~KvRequestProcessor() {
   stop();
@@ -51,15 +48,10 @@ void KvRequestProcessor::enqueueTask(std::function<void()> task) {
   cv_.notify_all();
 }
 
-void KvRequestProcessor::handleRequest(const Request& req,
+void KvRequestProcessor::handleRequest(const protocol::Request& req,
                                        const net::TcpServer::TcpConnectionPtr& conn,
                                        net::EventLoop* ioLoop) {
   enqueueTask([this, req, conn, ioLoop] {
-    // 如果是读请求，直接执行并回复
-    if (!isWrite(req)) {
-      executeAndReply({req, conn, ioLoop});
-      return;
-    }
     // 如果是写请求，加入待处理队列
     pendingRequests_.push_back({req, conn, ioLoop});
     pendingWriteBytes_ += sizeof(wal::RecordHeader) + req.key.size() + req.value.size();
@@ -67,30 +59,14 @@ void KvRequestProcessor::handleRequest(const Request& req,
   });
 }
 
-void KvRequestProcessor::initWAL() {
-  LOG_INFO("Recovering from WAL: {}", walPath_.string());
-
-  wal::WALReader::Recover(walPath_, memtable_);
-
-  walWriter_ = std::make_unique<wal::WALWriter>(walPath_);
-
-  LOG_INFO("WAL recovery done, storage ready");
-}
-
-void KvRequestProcessor::initDispatcher() {
-  dispatcher_ = std::make_unique<Dispatcher>(&memtable_);
-  dispatcher_->registerHandler(CommandType::GET,
-                               [this](const Request& req) { return memtable_.GET(req); });
-  dispatcher_->registerHandler(CommandType::SET,
-                               [this](const Request& req) { return memtable_.SET(req); });
-  dispatcher_->registerHandler(CommandType::DEL,
-                               [this](const Request& req) { return memtable_.DEL(req); });
+void KvRequestProcessor::submitWriteReq(PendingRequest& pending){
+  handleRequest(pending.request, pending.connection, pending.ioLoop);
 }
 
 void KvRequestProcessor::workerLoop() {
-  initWAL();
-  initDispatcher();
-
+  // initWAL();
+  // initDispatcher();
+  pthread_setname_np(pthread_self(), "submitwrite"); 
   {
     std::lock_guard<std::mutex> lock(mutex_);
     ready_ = true;
@@ -163,24 +139,6 @@ void KvRequestProcessor::processPendingRequests() {
   }
 }
 
-void KvRequestProcessor::executeAndReply(PendingRequest pending) {
-  auto req = pending.request;
-  LOG_DEBUG("cmd={} key={}", static_cast<int>(req.cmd), req.key);
-
-  Response rsp = dispatcher_->dispatch(req);
-  LOG_DEBUG("response: ok={} value={}", rsp.ok, rsp.value);
-
-  std::string rspData = encodeResponse(rsp);
-
-  pending.ioLoop->queueInLoop([conn = pending.connection, rspData] { conn->send(rspData); });
-}
-
-void KvRequestProcessor::reply(PendingRequest& pending, const Response& response) {
-  std::string data = encodeResponse(response);
-
-  pending.ioLoop->queueInLoop(
-      [conn = pending.connection, data = std::move(data)]() mutable { conn->send(data); });
-}
 
 void KvRequestProcessor::submitWriteBatch() {
   auto pendingRequestsPtr = std::make_shared<std::deque<PendingRequest>>(std::move(pendingRequests_));
@@ -188,34 +146,13 @@ void KvRequestProcessor::submitWriteBatch() {
   writeInFlight_ = true;
   pendingWriteBytes_ = 0;
 
-  auto callback = [this, ptr = pendingRequestsPtr](bool success) mutable {
-    enqueueTask([this, ptr = std::move(ptr), success]() mutable {
-      completeWriteBatch(ptr, success);
-    });
+  auto callback = [](bool) mutable {
   };
 
   walWriter_->appendRequests(pendingRequestsPtr, std::move(callback));
-}
-
-void KvRequestProcessor::completeWriteBatch(const std::shared_ptr<std::deque<server::PendingRequest>> &pendingRequestsPtr, bool success) {
-  for (auto& pending : *pendingRequestsPtr) {
-    Response response;
-
-    if (success) {
-      response = dispatcher_->dispatch((pending.request));
-    } else {
-      response = {false, "WAL persistence failed"};
-    }
-
-    reply(pending, response);
-  }
-
   writeInFlight_ = false;
-  processPendingRequests();
+  
+  // walWriter_->handleWriteRequest(pendingRequestsPtr);
 }
 
-
-bool KvRequestProcessor::isWrite(const Request& request) const {
-  return request.cmd == CommandType::SET || request.cmd == CommandType::DEL;
-}
 }  // namespace server

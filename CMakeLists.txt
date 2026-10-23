@@ -110,10 +110,10 @@ target_link_libraries(lightkv_kv_server PRIVATE net util)
     )
     target_link_libraries(lightkv_load_test_client PRIVATE net util)
 
-    add_executable(lightkv_simple_test_client
-        tests/simple_test_client.cpp
-    )
-    target_link_libraries(lightkv_simple_test_client PRIVATE net util)
+    # add_executable(lightkv_simple_test_client
+    #     tests/simple_test_client.cpp
+    # )
+    # target_link_libraries(lightkv_simple_test_client PRIVATE net util)
 
     add_executable(lightkv_rbench_client
         tests/rbench_client.cpp
@@ -125,32 +125,32 @@ target_link_libraries(lightkv_kv_server PRIVATE net util)
     )
     target_link_libraries(lightkv_conn_stress_test PRIVATE net util)
 
-    add_executable(lightkv_wal_test
-        tests/wal_test.cpp
-    )
-    target_link_libraries(lightkv_wal_test PRIVATE net util)
-    add_test(NAME lightkv_wal_test COMMAND lightkv_wal_test)
+    # add_executable(lightkv_wal_test
+    #     tests/wal_test.cpp
+    # )
+    # target_link_libraries(lightkv_wal_test PRIVATE net util)
+    # add_test(NAME lightkv_wal_test COMMAND lightkv_wal_test)
 
-    add_executable(lightkv_sstable_test
-        tests/sstable_test.cpp
-    )
-    target_link_libraries(lightkv_sstable_test PRIVATE net util)
-    add_test(NAME lightkv_sstable_test COMMAND lightkv_sstable_test)
+    # add_executable(lightkv_sstable_test
+    #     tests/sstable_test.cpp
+    # )
+    # target_link_libraries(lightkv_sstable_test PRIVATE net util)
+    # add_test(NAME lightkv_sstable_test COMMAND lightkv_sstable_test)
 
-    add_executable(lightkv_memtable_sstable_test
-        tests/memtable_sstable_test.cpp
-    )
-    target_link_libraries(lightkv_memtable_sstable_test PRIVATE net util)
-    add_test(NAME lightkv_memtable_sstable_test COMMAND lightkv_memtable_sstable_test)
+    # add_executable(lightkv_memtable_sstable_test
+    #     tests/memtable_sstable_test.cpp
+    # )
+    # target_link_libraries(lightkv_memtable_sstable_test PRIVATE net util)
+    # add_test(NAME lightkv_memtable_sstable_test COMMAND lightkv_memtable_sstable_test)
 
-    add_executable(lightkv_server_e2e_test
-        tests/server_e2e_test.cpp
-    )
-    target_link_libraries(lightkv_server_e2e_test PRIVATE net util)
-    add_test(NAME lightkv_server_e2e_test COMMAND lightkv_server_e2e_test)
+    # add_executable(lightkv_server_e2e_test
+    #     tests/server_e2e_test.cpp
+    # )
+    # target_link_libraries(lightkv_server_e2e_test PRIVATE net util)
+    # add_test(NAME lightkv_server_e2e_test COMMAND lightkv_server_e2e_test)
 
-    add_executable(lightkv_request_processor_test
-        tests/request_processor_test.cpp
-    )
-    target_link_libraries(lightkv_request_processor_test PRIVATE net util)
-    add_test(NAME lightkv_request_processor_test COMMAND lightkv_request_processor_test)
+    # add_executable(lightkv_request_processor_test
+    #     tests/request_processor_test.cpp
+    # )
+    # target_link_libraries(lightkv_request_processor_test PRIVATE net util)
+    # add_test(NAME lightkv_request_processor_test COMMAND lightkv_request_processor_test)

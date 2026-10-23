@@ -4,6 +4,7 @@
 #include <cstring>
 #include <fcntl.h>
 #include <unistd.h>
+#include <pthread.h>
 
 #include "protocol/request.hpp"
 #include "storage/wal/log_record.hpp"
@@ -98,7 +99,11 @@ void WALWriter::appendRequests(std::shared_ptr<std::deque<server::PendingRequest
   cv_.notify_one();
 }
 
+void WALWriter::handleWriteRequest(std::shared_ptr<std::deque<server::PendingRequest>> pendingRequestsPtr){
+  
+}
 void WALWriter::writeLoop() {
+  pthread_setname_np(pthread_self(), "wal-thread"); 
   while (true) {
     WALTask task;
 
@@ -122,7 +127,8 @@ void WALWriter::writeLoop() {
       LOG_ERROR("Failed to persist WAL batch: {}", std::strerror(errno));
     }
 
-    task.completion(success);
+    // task.completion(success);
+    processor_->handleGroupRequest(*task.pendingRequestsPtr);
   }
   LOG_INFO("WAL writer thread stopped");
 }

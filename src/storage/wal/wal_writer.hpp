@@ -8,6 +8,7 @@
 #include <string>
 #include <thread>
 
+#include "server/request_processor.hpp"
 #include "storage/wal/log_record.hpp"
 #include "server/KvRequestProcessor.hpp"
 
@@ -27,9 +28,13 @@ public:
   WALWriter(const WALWriter&) = delete;
   WALWriter& operator=(const WALWriter&) = delete;
 
+  void setprocessor(server::RequestProcessor* pprocessor){
+    processor_ = pprocessor;
+  }
   void append(const LogRecord& record);
   void appendBatch(std::string data, CompletionCallback callback);
   void appendRequests(std::shared_ptr<std::deque<server::PendingRequest>> pendingRequestsPtr, CompletionCallback cb);
+  void handleWriteRequest(std::shared_ptr<std::deque<server::PendingRequest>> pendingRequestsPtr);
 private:
   void writeLoop();
 
@@ -40,6 +45,7 @@ private:
   std::deque<WALTask> tasks_;
   bool stop_{false};
 
+  server::RequestProcessor* processor_{nullptr};
   std::thread write_thread_;
 };
 }  // namespace wal
