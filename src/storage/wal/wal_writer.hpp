@@ -5,12 +5,12 @@
 #include <functional>
 #include <memory>
 #include <mutex>
-#include <string>
 #include <thread>
+#include <vector>
 
 #include "server/request_processor.hpp"
-#include "storage/wal/log_record.hpp"
-#include "server/KvRequestProcessor.hpp"
+#include "server/server_def.hpp"
+#include "server/WriteBatchCoordinator.hpp"
 
 namespace wal {
 class WALWriter {
@@ -31,10 +31,7 @@ public:
   void setprocessor(server::RequestProcessor* pprocessor){
     processor_ = pprocessor;
   }
-  void append(const LogRecord& record);
-  void appendBatch(std::string data, CompletionCallback callback);
-  void appendRequests(std::shared_ptr<std::deque<server::PendingRequest>> pendingRequestsPtr, CompletionCallback cb);
-  void handleWriteRequest(std::shared_ptr<std::deque<server::PendingRequest>> pendingRequestsPtr);
+  void appendBatch(std::vector<server::PendingRequest> batch);
 private:
   void writeLoop();
 
@@ -42,7 +39,7 @@ private:
 
   std::mutex mtx_;
   std::condition_variable cv_;
-  std::deque<WALTask> tasks_;
+  std::queue<std::vector<server::PendingRequest>> batch_que_;
   bool stop_{false};
 
   server::RequestProcessor* processor_{nullptr};

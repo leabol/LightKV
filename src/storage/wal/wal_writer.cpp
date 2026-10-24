@@ -2,11 +2,14 @@
 
 #include <cerrno>
 #include <cstring>
+#include <mutex>
+#include <vector>
 #include <fcntl.h>
 #include <unistd.h>
 #include <pthread.h>
 
 #include "protocol/request.hpp"
+#include "server/server_def.hpp"
 #include "storage/wal/log_record.hpp"
 #include "util/Log.hpp"
 #include "util/crc32.hpp"
@@ -33,9 +36,9 @@ std::string encodeRecord(const protocol::Request& req) {
   return buffer;
 }
 
-bool writeAll(int fd,const WALWriter::WALTask &task) {
+bool writeAll(int fd,const std::vector<server::PendingRequest>& batch) {
   std::string writeBatch;
-  for (const auto & pending : *task.pendingRequestsPtr){
+  for (const auto & pending : batch){
     writeBatch += encodeRecord(pending.request);
   }
   size_t written = 0;
@@ -81,54 +84,63 @@ WALWriter::~WALWriter() {
   }
 }
 
-
-void WALWriter::appendRequests(std::shared_ptr<std::deque<server::PendingRequest>> pendingRequestsPtr, CompletionCallback callback) {
+void WALWriter::appendBatch(std::vector<server::PendingRequest> batch){
   bool accepted = false;
+  const auto batchSize = batch.size();
+  std::size_t queueSize = 0;
+  bool stopped = false;
+  int fd = -1;
   {
-    std::lock_guard lock(mtx_);
+    std::lock_guard<std::mutex> lock(mtx_);
     if (fd_ >= 0 && !stop_) {
-      tasks_.push_back({std::move(pendingRequestsPtr), std::move(callback)});
+      batch_que_.push(std::move(batch));
       accepted = true;
+      queueSize = batch_que_.size();
     }
+    stopped = stop_;
+    fd = fd_;
   }
-
   if (!accepted) {
-    callback(false);
+    LOG_ERROR("Rejecting WAL batch: requests={} writer_stopped={} fd={}",
+              batchSize, stopped, fd);
+    processor_->handleGroupRequest(std::move(batch), false);
     return;
   }
+  LOG_DEBUG("WAL batch queued: requests={} queue_size={}", batchSize, queueSize);
   cv_.notify_one();
 }
 
-void WALWriter::handleWriteRequest(std::shared_ptr<std::deque<server::PendingRequest>> pendingRequestsPtr){
-  
-}
+
 void WALWriter::writeLoop() {
   pthread_setname_np(pthread_self(), "wal-thread"); 
+  LOG_INFO("WAL writer thread started");
   while (true) {
-    WALTask task;
-
+    std::vector<server::PendingRequest> pendings;
     {
       std::unique_lock lock(mtx_);
-      cv_.wait(lock, [this] { return stop_ || !tasks_.empty(); });
+      cv_.wait(lock, [this] { return stop_ || !batch_que_.empty(); });
 
-      if (stop_ && tasks_.empty()) {
+      if (stop_ && batch_que_.empty()) {
         break;
       }
 
-      task = std::move(tasks_.front());
-      tasks_.pop_front();
+      pendings = std::move(batch_que_.front());
+      batch_que_.pop();
     }
 
-    bool success = writeAll(fd_, task);
+    bool success = writeAll(fd_, pendings);
+    const auto batchSize = pendings.size();
     if (success) {
       success = ::fdatasync(fd_) == 0;
     }
     if (!success) {
-      LOG_ERROR("Failed to persist WAL batch: {}", std::strerror(errno));
+      LOG_ERROR("Failed to persist WAL batch: requests={} error={}",
+                batchSize, std::strerror(errno));
+    } else {
+      LOG_DEBUG("WAL batch persisted: requests={}", batchSize);
     }
 
-    // task.completion(success);
-    processor_->handleGroupRequest(*task.pendingRequestsPtr);
+    processor_->handleGroupRequest(std::move(pendings), success);
   }
   LOG_INFO("WAL writer thread stopped");
 }

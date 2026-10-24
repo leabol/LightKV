@@ -2,11 +2,9 @@
 
 #include "net/EventLoop.hpp"
 #include "net/InetAddress.hpp"
-#include "util/Log.hpp"
 #include "server/kv_server.hpp"
 
 int main(int argc, char** argv) {
-  Server::setLevel(spdlog::level::off);
   std::string port = "8990";
   
   int numThreads = 1;

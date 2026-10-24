@@ -21,8 +21,8 @@ void KvServer::setThreadNum(int numThreads) {
 
 void KvServer::start() {
   initWAL();
-  storage_.setWALWriter(walWriter_.get());
-  storage_.start();
+  writeCoordinator_.setWALWriter(walWriter_.get());
+  writeCoordinator_.start();
   walWriter_->setprocessor(&this->reqProcessor_);
   reqProcessor_.start();
   
@@ -38,7 +38,7 @@ void KvServer::onMessage(const net::TcpServer::TcpConnectionPtr &conn, net::Buff
     if (req.cmd == CommandType::GET){
       reqProcessor_.handleRequest(pending);
     }else {
-      storage_.handleRequest(req, conn, conn->getLoop());
+      writeCoordinator_.submitWriteReq(std::move(pending));
     }
   }
 }

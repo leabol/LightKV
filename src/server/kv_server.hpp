@@ -5,7 +5,7 @@
 #include "net/TcpConnection.hpp"
 #include "net/TcpServer.hpp"
 #include "net/buffer.hpp"
-#include "server/KvRequestProcessor.hpp"
+#include "server/WriteBatchCoordinator.hpp"
 #include "server/request_processor.hpp"
 #include "storage/wal/wal_writer.hpp"
 
@@ -25,7 +25,7 @@ public:
    }
 private:
   std::unique_ptr<wal::WALWriter> walWriter_;
-  KvRequestProcessor storage_;
+  WriteBatchCoordinator writeCoordinator_;
   RequestProcessor reqProcessor_;
   net::TcpServer server_;
 

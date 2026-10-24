@@ -5,6 +5,7 @@
 #include <mutex>
 #include <queue>
 #include <thread>
+#include <vector>
 
 #include "server/dispatcher.hpp"
 #include "server/server_def.hpp"
@@ -20,7 +21,7 @@ public:
   void start();
   void stop();
   void handleRequest(PendingRequest& request);
-  void handleGroupRequest(std::deque<PendingRequest>& requests);
+  void handleGroupRequest(std::vector<PendingRequest> requests, bool success);
 
   storage::Memtable& getMemtable(){
     return memtable_;
@@ -36,6 +37,7 @@ private:
 
   std::thread reqProcessTh_;
   std::queue<PendingRequest> requests_;
+  std::vector<PendingRequest> failed_request_;
   std::mutex mtx_;
   std::condition_variable cvProcessor_;
   std::condition_variable cvSubmitor_;
