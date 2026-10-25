@@ -1,5 +1,7 @@
 #pragma once
+#include <cstdint>
 #include <functional>
+#include <map>
 #include <memory>
 #include <string>
 
@@ -44,8 +46,18 @@ public:
   // 强制立即关闭
   void forceClose();
 
-  // 发送数据（追加到发送缓冲，注册写事件）
+  // 发送数据（追加到发送缓冲，注册写事件）。线程安全：可从任意线程调用，内部会切回所属 EventLoop。
   void send(const std::string& data);
+
+  // 回复保序: RESP 要求「一个请求恰好一个回复，且顺序与请求一致」。
+  uint64_t nextRequestSeq();  // 只能在所属 EventLoop 线程调用
+
+  // data 按值传入：调用方传临时量时可直接 move，省掉一次拷贝
+  void sendOrderedReply(uint64_t seq, std::string data, bool closeAfter = false);
+
+  // QUIT 之后收到的字节必须全部丢弃（RESP 语义：QUIT 后的命令不执行）
+  void markQuitReceived() { quitReceived_ = true; }
+  bool quitReceived() const { return quitReceived_; }
 
   EventLoop* getLoop() const { return loop_; }
   int fd() const;  // 便捷
@@ -60,6 +72,18 @@ private:
   void handleClose();
   void handleError();
 
+  // 输出缓冲高水位。超过就断开连接：Buffer::append 在空间不足时是静默截断的，
+  // 一旦截断客户端会收到残缺的 RESP 帧（长度头和内容对不上），比断开更糟。
+  static constexpr size_t kOutputHighWaterMark = 16UL * 1024 * 1024;
+  // 提前到达、等待前序回复的缓存上限（条数 + 字节数）
+  static constexpr size_t kMaxEarlyReplies = 64UL * 1024;
+  static constexpr size_t kMaxEarlyReplyBytes = 16UL * 1024 * 1024;
+
+  // 以下只能在所属 EventLoop 线程调用
+  void pushOrderedReply(uint64_t seq, std::string data, bool closeAfter);
+  void flushOrderedReplies();
+  void maybeCloseAfterReply();
+
   EventLoop* loop_{nullptr};
   std::unique_ptr<Socket> socket_;
   std::unique_ptr<Channel> channel_;
@@ -68,6 +92,15 @@ private:
 
   net::Buffer outputBuffer_;
   net::Buffer inputBuffer_;
+
+  // 回复保序状态
+  uint64_t issuedRequestSeq_{0};               // 已分配的最大请求序号
+  uint64_t nextReplySeq_{0};                   // 下一个该输出的回复序号
+  std::map<uint64_t, std::string> earlyReplies_;  // 提前到达、等待前序的回复
+  size_t earlyReplyBytes_{0};
+  uint64_t closeAfterReplySeq_{0};             // 输出到该序号后关闭写端（QUIT）
+  bool hasCloseAfterReply_{false};
+  bool quitReceived_{false};                   // QUIT 已处理，后续字节一律丢弃
 
   ConnectionCallback connectionCallback_;
   MessageCallback messageCallback_;

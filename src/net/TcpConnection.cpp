@@ -69,8 +69,24 @@ void TcpConnection::forceClose() {
 }
 
 void TcpConnection::send(const std::string& data) {
-  if (state_ != kConnected) {
+  // kDisconnecting 仍允许写：QUIT 的 +OK 发出后进入优雅关闭，handleWrite 会在
+  // outputBuffer 排空后才真正 SHUT_WR，这期间还可能有回复要追加。
+  if (state_ != kConnected && state_ != kDisconnecting) {
     LOG_WARN("TcpConnection fd={} send failed: not connected", fd());
+    return;
+  }
+  // 慢消费者保护：Buffer::append 在空间不足时是静默截断的，会发出残缺的 RESP 帧。
+  // 与其让客户端解析错乱，不如主动断开。
+  // 注意判定的是「累计积压」，不能把本条回复的 size 也算进去 —— 否则单条大 value
+  // （例如 20MB 的 GET）会被误判成溢出而永远发不出去。
+  const size_t buffered = outputBuffer_.readableByte();
+  if (buffered > kOutputHighWaterMark || buffered + data.size() > outputBuffer_.maxSize()) {
+    LOG_ERROR("TcpConnection fd={} output buffer overflow: buffered={} pending={} limit={}, closing",
+              fd(),
+              buffered,
+              data.size(),
+              kOutputHighWaterMark);
+    handleError();
     return;
   }
   LOG_TRACE("TcpConnection fd={} sending {} bytes", fd(), data.size());
@@ -110,6 +126,101 @@ void TcpConnection::send(const std::string& data) {
   }
 }
 
+uint64_t TcpConnection::nextRequestSeq() {
+  loop_->assertInLoopThread();
+  return issuedRequestSeq_++;
+}
+
+void TcpConnection::sendOrderedReply(uint64_t seq, std::string data, bool closeAfter) {
+  // 快路径：已经在所属 IO 线程（PING / 未知命令 / 协议错误都走这里），
+  // 直接处理，避免一次 std::function 堆分配 + 一次事件循环往返。
+  if (loop_->isInLoopThread()) {
+    pushOrderedReply(seq, std::move(data), closeAfter);
+    return;
+  }
+  // 慢路径：可能从存储线程 / WAL 线程调用，统一切回 IO 线程
+  auto self = shared_from_this();
+  loop_->queueInLoop([self, seq, data = std::move(data), closeAfter]() mutable {
+    self->pushOrderedReply(seq, std::move(data), closeAfter);
+  });
+}
+
+void TcpConnection::pushOrderedReply(uint64_t seq, std::string data, bool closeAfter) {
+  loop_->assertInLoopThread();
+  if (state_ == kDisconnected) {
+    return;
+  }
+
+  // 快路径：正是下一个该输出的序号，且没有积压 —— 稳态下完全不碰 map。
+  if (seq == nextReplySeq_ && earlyReplies_.empty()) {
+    ++nextReplySeq_;
+    if (!data.empty()) {
+      send(data);
+    }
+    if (closeAfter) {
+      closeAfterReplySeq_ = seq;
+      hasCloseAfterReply_ = true;
+    }
+    maybeCloseAfterReply();
+    return;
+  }
+
+  // 乱序到达：先进重排缓冲，等前序到齐
+  earlyReplyBytes_ += data.size();
+  earlyReplies_.emplace(seq, std::move(data));
+  if (closeAfter) {
+    closeAfterReplySeq_ = seq;
+    hasCloseAfterReply_ = true;
+  }
+
+  // 兜底：某个请求永远不产生回复时，连接会一直卡在等待上并无限吃内存
+  if (earlyReplies_.size() > kMaxEarlyReplies || earlyReplyBytes_ > kMaxEarlyReplyBytes) {
+    LOG_ERROR("TcpConnection fd={} too many pending replies (count={} bytes={} next={}), closing",
+              fd(),
+              earlyReplies_.size(),
+              earlyReplyBytes_,
+              nextReplySeq_);
+    earlyReplies_.clear();
+    earlyReplyBytes_ = 0;
+    handleError();
+    return;
+  }
+
+  flushOrderedReplies();
+}
+
+void TcpConnection::flushOrderedReplies() {
+  loop_->assertInLoopThread();
+
+  std::string batch;
+  while (true) {
+    auto it = earlyReplies_.find(nextReplySeq_);
+    if (it == earlyReplies_.end()) {
+      break;
+    }
+    earlyReplyBytes_ -= it->second.size();
+    batch += it->second;
+    earlyReplies_.erase(it);
+    ++nextReplySeq_;
+  }
+
+  if (!batch.empty()) {
+    send(batch);
+  }
+
+  // 空回复（例如空行）也要推进序号，所以关闭判断必须放在 batch 检查之外
+  maybeCloseAfterReply();
+}
+
+void TcpConnection::maybeCloseAfterReply() {
+  loop_->assertInLoopThread();
+  // QUIT：等它前面所有回复都输出完，再关闭写端（shutdown 会等 outputBuffer 排空）
+  if (hasCloseAfterReply_ && nextReplySeq_ > closeAfterReplySeq_) {
+    hasCloseAfterReply_ = false;
+    shutdown();
+  }
+}
+
 void TcpConnection::handleRead() {
   for (;;) {
     uint8_t* pWrite = inputBuffer_.beginWrite(net::kRecvChunk);
@@ -134,6 +245,10 @@ void TcpConnection::handleRead() {
       if (messageCallback_) {
         auto self = shared_from_this();
         messageCallback_(self, inputBuffer_);
+      }
+      // 回调里可能已经因为协议错误 / 背压拒绝把连接关掉了，此时不能再 recv
+      if (state_ == kDisconnected) {
+        break;
       }
       continue;
     }
@@ -198,9 +313,29 @@ void TcpConnection::handleClose() {
   if (state_ == kDisconnected) {
     return;
   }
-  LOG_INFO("TcpConnection fd={} closing", fd());
+  LOG_INFO("TcpConnection fd={} closing (pending_replies={} buffered_out={} buffered_in={})",
+           fd(),
+           earlyReplies_.size(),
+           outputBuffer_.readableByte(),
+           inputBuffer_.readableByte());
   setState(kDisconnected);
   channel_->disableAll();
+
+  // 主动清空：TcpConnection 会被「在途 PendingRequest 里的 shared_ptr」延长生命周期，
+  // 如果这里不释放，等待队列排空之前这些缓冲会一直占着内存
+  // （earlyReplies_ 里可能是几十条 MB 级的 GET 回复，outputBuffer_ 上限 16MB）。
+  // 连接已经断了，这些数据也没有任何发送意义。
+  earlyReplies_.clear();
+  earlyReplyBytes_ = 0;
+  hasCloseAfterReply_ = false;
+  closeAfterReplySeq_ = 0;
+  if (inputBuffer_.readableByte() > 0) {
+    inputBuffer_.consume(inputBuffer_.readableByte());
+  }
+  if (outputBuffer_.readableByte() > 0) {
+    outputBuffer_.consume(outputBuffer_.readableByte());
+  }
+
   // channel_->remove(); // 可选：若需要主动从 Loop 移除
   if (closeCallback_) {
     // 这里会清楚tcpserver的所有权，防止tcpconnection被释放

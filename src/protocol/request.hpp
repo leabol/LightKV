@@ -26,7 +26,9 @@ struct Request {
   // 参数个数不匹配（此时 cmd 为 UNKNOWN，commandName 为对应命令）
   bool wrongArity{false};
 
-  uint8_t seq{0};
+  // 连接级的请求序号，由 IO 线程在解析出请求后分配，用于保证回复顺序。
+  // 协议层不关心它的值，只在 PendingRequest 里传递。
+  uint64_t seq{0};
 };
 
 }  // namespace protocol
