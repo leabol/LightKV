@@ -1,47 +1,33 @@
 #pragma once
 #include <cstdint>
 #include <string>
+#include <string_view>
+#include <vector>
 
 #include "protocol/response.hpp"
 
-// Request frame layout:
-//  +----------+-------+----------+---------+----------+---------+
-//  | 4-byte   | 1-byte| 2-byte   | key     | 3-byte   | value   |
-//  | total    | op    | key_len  | bytes   | value_len| bytes   |
-//  | length   |       |          |         |          |         |
-//  +----------+-------+----------+---------+----------+---------+
+// RESP (REdis Serialization Protocol) 回复编码。
 //
-// Response frame layout:
-//  +----------+--------+----------+---------+
-//  | 4-byte   | 1-byte | 3-byte   | value   |
-//  | total    | status | value_len| bytes   |
-//  | length   | code   |          |         |
-//  +----------+--------+----------+---------+
+//   +OK\r\n            简单字符串
+//   -ERR xxx\r\n       错误
+//   :1\r\n             整数
+//   $3\r\nbar\r\n      bulk string（GET 命中）
+//   $-1\r\n            bulk 空值（GET 未命中）
 
 namespace protocol {
 
-// Helper functions for big-endian encoding
-inline void write_u32_be(uint8_t* data, uint32_t val) {
-  data[0] = static_cast<uint8_t>((val >> 24) & 0xFF);
-  data[1] = static_cast<uint8_t>((val >> 16) & 0xFF);
-  data[2] = static_cast<uint8_t>((val >> 8) & 0xFF);
-  data[3] = static_cast<uint8_t>(val & 0xFF);
-}
+// 简单字符串 / 错误行里不能出现 CRLF，内部会把 \r\n 替换成空格
+std::string encodeSimpleString(std::string_view s);
+std::string encodeError(std::string_view s);
+std::string encodeInteger(int64_t v);
+std::string encodeBulkString(std::string_view s);
+std::string encodeNullBulkString();
 
-inline void write_u24_be(uint8_t* data, uint32_t val) {
-  data[0] = static_cast<uint8_t>((val >> 16) & 0xFF);
-  data[1] = static_cast<uint8_t>((val >> 8) & 0xFF);
-  data[2] = static_cast<uint8_t>(val & 0xFF);
-}
-
-inline void write_u16_be(uint8_t* data, uint16_t val) {
-  data[0] = static_cast<uint8_t>((val >> 8) & 0xFF);
-  data[1] = static_cast<uint8_t>(val & 0xFF);
-}
-
-// Encode Response into a serialized byte string
-// Status code: 0xC8 (200) for success, 0x00 for error
-// Value is truncated to 3-byte length max
+// 按 Response::type 分派到上面的具体编码函数
 std::string encodeResponse(const Response& rep);
 
+// 把命令编码成 RESP 请求（客户端 / 测试用）
+std::string encodeRequest(const std::vector<std::string>& argv);
+
 }  // namespace protocol
+

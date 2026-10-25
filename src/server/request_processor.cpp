@@ -8,6 +8,43 @@
 #include "util/Log.hpp"
 
 namespace server {
+namespace {
+
+// 存储层只返回 ok/value，这里按命令翻译成 RESP 的回复类型
+Response toRespReply(const Request& req, const Response& raw) {
+  Response reply;
+  reply.ok = raw.ok;
+  switch (req.cmd) {
+    case CommandType::GET:
+      if (raw.ok) {
+        reply.type = ReplyType::BulkString;
+        reply.value = raw.value;
+      } else {
+        reply.type = ReplyType::NullBulk;  // 未命中必须是 $-1
+      }
+      break;
+    case CommandType::SET:
+      if (raw.ok) {
+        reply.type = ReplyType::SimpleString;
+        reply.value = "OK";
+      } else {
+        reply.type = ReplyType::Error;
+        reply.value = "ERR write failed";
+      }
+      break;
+    case CommandType::DEL:
+      reply.type = ReplyType::Integer;
+      reply.integer = raw.ok ? 1 : 0;
+      break;
+    default:
+      reply.type = ReplyType::Error;
+      reply.value = "ERR unsupported command";
+      break;
+  }
+  return reply;
+}
+
+}  // namespace
 
 RequestProcessor::RequestProcessor() = default;
 
@@ -92,7 +129,7 @@ LOG_INFO("Request processing thread started");
 
     while (!reqs.empty()) {
       PendingRequest pending = std::move(reqs.front());
-      Response response = dispatcher_->dispatch(pending.request);
+      Response response = toRespReply(pending.request, dispatcher_->dispatch(pending.request));
       LOG_DEBUG("Request processed: cmd={} key={} success={}",
                 static_cast<int>(pending.request.cmd), pending.request.key, response.ok);
       std::string responseData = encodeResponse(response);
@@ -103,9 +140,10 @@ LOG_INFO("Request processing thread started");
 
     if (!failed_request_.empty()){
       LOG_WARN("Sending failure responses: requests={}", failed_request_.size());
-      Response response{false, "WAL failed to persist"};
-      std::string responseData = encodeResponse(response);
+      // 每类命令的失败回复不同（SET 是错误行、DEL 是整数），所以逐条编码
       for (auto& pending : failed_request_) {
+        Response failed{false, "ERR WAL failed to persist", ReplyType::Error, 0};
+        std::string responseData = encodeResponse(failed);
         pending.ioLoop->queueInLoop(
           [conn = pending.connection, responseData] { conn->send(responseData); });
       }

@@ -31,7 +31,7 @@ add_library(net STATIC
     src/protocol/parser.cpp
     src/protocol/codec.cpp
     src/server/kv_server.cpp
-    src/server/WriteBatchCoordinator.cpp
+    src/server/write_batch_coordinator.cpp
     src/server/request_processor.cpp
     src/net/EventLoopThread.cpp
     src/net/EventLoopThreadPoll.cpp

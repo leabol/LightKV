@@ -1,35 +1,29 @@
 #pragma once
-#include <cstdint>
 
 #include "net/buffer.hpp"
 #include "protocol/request.hpp"
 
-// Protocol frame layout:
+// RESP (REdis Serialization Protocol) 请求解析。
 //
-//  +------------+--------+--------------+-----------+----------------+-----------+
-//  | 4-byte len | 1-byte | 2-byte key   | key bytes | 3-byte value   | value     |
-//  |            | op     | length       |           | length         | bytes     |
-//  +------------+--------+--------------+-----------+----------------+-----------+
-//  | total frame size includes all fields above, followed by variable-length key/value payloads |
+// 客户端发来的请求是一个 bulk string 数组：
+//   *<参数个数>\r\n
+//   $<字节数>\r\n<参数>\r\n
+//   ...
+// 例如 SET foo bar：
+//   *3\r\n$3\r\nSET\r\n$3\r\nfoo\r\n$3\r\nbar\r\n
+//
+// 同时兼容 inline 命令（方便 telnet 手工测试）：
+//   GET foo\r\n
 
 namespace protocol {
 
-// 从 uint8_t 指针读取大端 uint32_t
-inline uint32_t read_u32(const uint8_t *data) {
-  // 最高位字节(data[0])左移24位，依此类推
-  return (static_cast<uint32_t>(data[0]) << 24) | (static_cast<uint32_t>(data[1]) << 16) |
-         (static_cast<uint32_t>(data[2]) << 8) | data[3];
-}
+enum class ParseResult {
+  Ok,        // 解析出一条完整请求，req 已填充，buffer 已消费
+  NeedMore,  // 数据不完整（半包），buffer 未被消费，等下次可读事件
+  Error,     // 协议错误，调用方应回复错误并关闭连接
+};
 
-inline uint32_t read_u24(const uint8_t *data) {
-  return (static_cast<uint32_t>(data[0]) << 16) | (static_cast<uint32_t>(data[1]) << 8) | data[2];
-}
-
-inline uint16_t read_u16(const uint8_t *data) {
-  return (static_cast<uint32_t>(data[0]) << 8) | data[1];
-}
-
-
-bool parserRequest(net::Buffer &buffer, Request &req);
+// 增量解析：只有完整解析出一条请求后才会消费 buffer，因此可直接在循环里调用
+ParseResult parserRequest(net::Buffer &buffer, Request &req);
 
 }  // namespace protocol

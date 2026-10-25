@@ -88,11 +88,16 @@ public:
     LogRecord record;
     while (reader.next(record)) {
       if (record.type == RecordType::SET) {
-        protocol::Request req{protocol::CommandType::SET, record.key, record.value};
+        protocol::Request req;
+        req.cmd = protocol::CommandType::SET;
+        req.key = record.key;
+        req.value = record.value;
         memtable.SET(req);
         LOG_DEBUG("Recover SET: key={}", req.key);
       } else if (record.type == RecordType::DELETE) {
-        protocol::Request req{protocol::CommandType::DEL, record.key, ""};
+        protocol::Request req;
+        req.cmd = protocol::CommandType::DEL;
+        req.key = record.key;
         memtable.DEL(req);
         LOG_DEBUG("Recover DEL: key={}", req.key);
       }

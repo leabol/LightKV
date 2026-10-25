@@ -1,33 +1,95 @@
 #include "protocol/codec.hpp"
 
 #include <string>
+#include <string_view>
+#include <vector>
 
 namespace protocol {
+namespace {
+
+constexpr std::string_view kCrlf = "\r\n";
+
+// 简单字符串 / 错误只能是一行，需要把内容里的换行替换掉，避免协议注入
+void appendSingleLine(std::string& out, std::string_view s) {
+  for (const char c : s) {
+    out.push_back((c == '\r' || c == '\n') ? ' ' : c);
+  }
+}
+
+}  // namespace
+
+std::string encodeSimpleString(std::string_view s) {
+  std::string out;
+  out.reserve(s.size() + 3);
+  out.push_back('+');
+  appendSingleLine(out, s);
+  out.append(kCrlf);
+  return out;
+}
+
+std::string encodeError(std::string_view s) {
+  std::string out;
+  out.reserve(s.size() + 3);
+  out.push_back('-');
+  appendSingleLine(out, s);
+  out.append(kCrlf);
+  return out;
+}
+
+std::string encodeInteger(int64_t v) {
+  std::string out;
+  out.reserve(24);
+  out.push_back(':');
+  out.append(std::to_string(v));
+  out.append(kCrlf);
+  return out;
+}
+
+std::string encodeBulkString(std::string_view s) {
+  std::string out;
+  out.reserve(s.size() + 16);
+  out.push_back('$');
+  out.append(std::to_string(s.size()));
+  out.append(kCrlf);
+  out.append(s.data(), s.size());
+  out.append(kCrlf);
+  return out;
+}
+
+std::string encodeNullBulkString() {
+  return "$-1\r\n";
+}
 
 std::string encodeResponse(const Response& rep) {
-  const uint32_t maxValueLen = (1U << 24) - 1;  // 3-byte max
-  uint32_t val_len = rep.value.size();
-  if (val_len > maxValueLen) {
-    val_len = maxValueLen;
+  switch (rep.type) {
+    case ReplyType::SimpleString:
+      return encodeSimpleString(rep.value);
+    case ReplyType::Error:
+      return encodeError(rep.value);
+    case ReplyType::Integer:
+      return encodeInteger(rep.integer);
+    case ReplyType::BulkString:
+      return encodeBulkString(rep.value);
+    case ReplyType::NullBulk:
+      return encodeNullBulkString();
   }
+  return encodeError("ERR internal error");
+}
 
-  const uint32_t totalLen = 4 + 1 + 3 + val_len;  // len + status + val_len + value
-
-  std::string encoded;
-  encoded.reserve(totalLen);
-
-  // Encode header: [4-byte len][1-byte status][3-byte val_len]
-  uint8_t header[8];
-  write_u32_be(header + 0, totalLen);
-  header[4] = rep.ok ? 0xC8 : 0x00;  // 200 for ok, 0 for error
-  write_u24_be(header + 5, val_len);
-
-  encoded.append(reinterpret_cast<char*>(header), 8);
-  if (val_len > 0) {
-    encoded.append(rep.value, 0, val_len);
+std::string encodeRequest(const std::vector<std::string>& argv) {
+  std::string out;
+  out.push_back('*');
+  out.append(std::to_string(argv.size()));
+  out.append(kCrlf);
+  for (const auto& arg : argv) {
+    out.push_back('$');
+    out.append(std::to_string(arg.size()));
+    out.append(kCrlf);
+    out.append(arg.data(), arg.size());
+    out.append(kCrlf);
   }
-
-  return encoded;
+  return out;
 }
 
 }  // namespace protocol
+
