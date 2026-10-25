@@ -36,10 +36,18 @@ std::string encodeRecord(const protocol::Request& req) {
   return buffer;
 }
 
-bool writeAll(int fd,const std::vector<server::PendingRequest>& batch) {
+bool writeAll(int fd, const std::vector<server::PendingRequest>& batch, bool* wrote_any) {
+  *wrote_any = false;
   std::string writeBatch;
   for (const auto & pending : batch){
+    // 读命令也走这条队列（为了保持执行顺序），但不能写进 WAL
+    if (pending.request.cmd == protocol::CommandType::GET) {
+      continue;
+    }
     writeBatch += encodeRecord(pending.request);
+  }
+  if (writeBatch.empty()) {
+    return true;  // 整批都是读：无需落盘
   }
   size_t written = 0;
   size_t total_size = writeBatch.size();
@@ -54,6 +62,7 @@ bool writeAll(int fd,const std::vector<server::PendingRequest>& batch) {
     }
     return false;
   }
+  *wrote_any = true;
   return true;
 }
 
@@ -128,9 +137,10 @@ void WALWriter::writeLoop() {
       batch_que_.pop();
     }
 
-    bool success = writeAll(fd_, pendings);
+    bool wroteAny = false;
+    bool success = writeAll(fd_, pendings, &wroteAny);
     const auto batchSize = pendings.size();
-    if (success) {
+    if (success && wroteAny) {
       success = ::fdatasync(fd_) == 0;
     }
     if (!success) {

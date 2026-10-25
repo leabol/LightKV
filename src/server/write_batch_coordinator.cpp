@@ -43,22 +43,32 @@ void WriteBatchCoordinator::stop() {
 }
 
 
-void WriteBatchCoordinator::submitWriteReq(PendingRequest pending){
+bool WriteBatchCoordinator::submitWriteReq(PendingRequest pending){
   const auto key = pending.request.key;
   const auto command = static_cast<int>(pending.request.cmd);
+  const size_t reqBytes = pending.request.key.size() + pending.request.value.size();
   std::size_t queueSize = 0;
   {
     std::lock_guard<std::mutex> lock(mtx_);
     if (stop_) {
       LOG_WARN("Dropping write request because storage coordinator is stopping: cmd={} key={}",
                command, key);
-      return;
+      return false;
     }
+    // 背压：不设上限的话深 pipeline 客户端可以把队列堆到 OOM
+    if (writeRequests_.size() >= kMaxQueuedRequests ||
+        queuedBytes_ + reqBytes > kMaxQueuedBytes) {
+      LOG_WARN("Write queue full, rejecting: cmd={} key={} queued={} bytes={}",
+               command, key, writeRequests_.size(), queuedBytes_);
+      return false;
+    }
+    queuedBytes_ += reqBytes;
     writeRequests_.push(std::move(pending));
     queueSize = writeRequests_.size();
   }
   LOG_DEBUG("Write request queued: cmd={} key={} queue_size={}", command, key, queueSize);
   cvWAL_.notify_all();
+  return true;
 }
 
 void WriteBatchCoordinator::submitWriteLoop(){
@@ -73,6 +83,7 @@ void WriteBatchCoordinator::submitWriteLoop(){
   std::vector<PendingRequest> batch;
   batch.reserve(kMaxBatchSize/100);
   std::optional<Clock::time_point> batch_start;
+  bool batchHasWrite = false;
 
   while (true) {
       std::unique_lock<std::mutex> lock(mtx_);
@@ -82,7 +93,8 @@ void WriteBatchCoordinator::submitWriteLoop(){
       if (writeRequests_.empty()){
         if (batch.empty()){
           cvWAL_.wait(lock, [&]{ return stop_ || !writeRequests_.empty();});
-        } else {
+        } else if (batchHasWrite) {
+          // 只有包含写请求时才需要等提交窗口来攒批；纯读批次直接放行，避免引入 1ms 延迟
           cvWAL_.wait_until(lock, *batch_start + kCommitWindow,[&]{
             return stop_ || !writeRequests_.empty(); });
         }
@@ -92,16 +104,21 @@ void WriteBatchCoordinator::submitWriteLoop(){
         if (batch.empty()){
           batch_start = Clock::now();
         }
-        PendingRequest pending = writeRequests_.front();
-        pendingWriteBytes_ += pending.request.key.size() + pending.request.value.size();
-        batch.push_back(std::move(pending));
+        PendingRequest pending = std::move(writeRequests_.front());
         writeRequests_.pop();
+        // 出队即从背压统计里扣掉（批内的量由 pendingWriteBytes_ 独立限制）
+        queuedBytes_ -= pending.request.key.size() + pending.request.value.size();
+        pendingWriteBytes_ += pending.request.key.size() + pending.request.value.size();
+        if (pending.request.cmd != protocol::CommandType::GET) {
+          batchHasWrite = true;
+        }
+        batch.push_back(std::move(pending));
       }
 
       bool isfull = pendingWriteBytes_ >= kMaxBatchSize;
       bool timeout = batch_start && Clock::now() >= *batch_start + kCommitWindow;
 
-      if (batch.empty() || !(isfull || timeout || stop_)){
+      if (batch.empty() || !(isfull || timeout || stop_ || !batchHasWrite)){
         continue;
       }
 
@@ -112,6 +129,7 @@ void WriteBatchCoordinator::submitWriteLoop(){
       const auto age = batch_start ? Clock::now() - *batch_start : Clock::duration::zero();
       pendingWriteBytes_ = 0;
       batch_start.reset();
+      batchHasWrite = false;
       lock.unlock();
 
       LOG_DEBUG("Submitting WAL batch: requests={} bytes={} age_us={}",

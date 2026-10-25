@@ -1,7 +1,6 @@
 #include "server/request_processor.hpp"
 #include <pthread.h>
 #include <vector>
-#include "net/EventLoop.hpp"
 #include "protocol/codec.hpp"
 #include "protocol/response.hpp"
 #include "server/server_def.hpp"
@@ -97,8 +96,20 @@ void RequestProcessor::handleGroupRequest(std::vector<PendingRequest> requests, 
       LOG_DEBUG("WAL batch completed successfully: requests={} queue_size={}",
                 requests.size(), requests_.size());
     } else {
-      failed_request_.swap(requests);
-      LOG_ERROR("WAL batch failed: requests={}", failed_request_.size());
+      // README: 读请求不写 WAL，不该被同批次里的写失败连累。
+      // 写失败 == 那些写没有生效，读照常执行、看到的自然是旧值，这个语义是对的。
+      failed_request_.clear();
+      size_t rejectedWrites = 0;
+      for (auto& req : requests) {
+        if (req.request.cmd == CommandType::GET) {
+          requests_.push(std::move(req));
+        } else {
+          failed_request_.push_back(std::move(req));
+          ++rejectedWrites;
+        }
+      }
+      LOG_ERROR("WAL batch failed: rejected_writes={} replayed_gets={}",
+                rejectedWrites, requests.size() - rejectedWrites);
     }
   }
   cvProcessor_.notify_all();
@@ -116,13 +127,16 @@ LOG_INFO("Request processing thread started");
 
   while (true) {
     std::queue<PendingRequest> reqs;
+    std::vector<PendingRequest> failed;
     {
       std::unique_lock lock(mtx_);
       cvProcessor_.wait(lock, [this] { return stop_ || !requests_.empty(); });
       std::swap(reqs, requests_);
+      // 在锁内取走失败请求，避免与 handleGroupRequest（WAL 线程）并发读写
+      std::swap(failed, failed_request_);
     }
     LOG_DEBUG("Processing request batch: requests={}", reqs.size());
-    if (stop_ && reqs.empty()) {
+    if (stop_ && reqs.empty() && failed.empty()) {
       break;
     }
     cvSubmitor_.notify_all();
@@ -133,21 +147,17 @@ LOG_INFO("Request processing thread started");
       LOG_DEBUG("Request processed: cmd={} key={} success={}",
                 static_cast<int>(pending.request.cmd), pending.request.key, response.ok);
       std::string responseData = encodeResponse(response);
-      pending.ioLoop->queueInLoop(
-          [conn = pending.connection, responseData] { conn->send(responseData); });
+      pending.connection->sendOrderedReply(pending.request.seq, std::move(responseData));
       reqs.pop();
     }
 
-    if (!failed_request_.empty()){
-      LOG_WARN("Sending failure responses: requests={}", failed_request_.size());
+    if (!failed.empty()){
+      LOG_WARN("Sending failure responses: requests={}", failed.size());
       // 每类命令的失败回复不同（SET 是错误行、DEL 是整数），所以逐条编码
-      for (auto& pending : failed_request_) {
-        Response failed{false, "ERR WAL failed to persist", ReplyType::Error, 0};
-        std::string responseData = encodeResponse(failed);
-        pending.ioLoop->queueInLoop(
-          [conn = pending.connection, responseData] { conn->send(responseData); });
+      for (auto& pending : failed) {
+        Response failure{false, "ERR WAL failed to persist", ReplyType::Error, 0};
+        pending.connection->sendOrderedReply(pending.request.seq, encodeResponse(failure));
       }
-      failed_request_.clear();
     }
   }
   LOG_INFO("Request processing thread stopped");
