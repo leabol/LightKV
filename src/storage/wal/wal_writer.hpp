@@ -1,25 +1,37 @@
 #pragma once
-#include <chrono>
 #include <condition_variable>
+#include <deque>
 #include <filesystem>
+#include <functional>
+#include <memory>
 #include <mutex>
-#include <queue>
-#include <string>
 #include <thread>
+#include <vector>
 
-#include "storage/wal/log_record.hpp"
+#include "server/request_processor.hpp"
+#include "server/server_def.hpp"
+#include "server/write_batch_coordinator.hpp"
 
 namespace wal {
 class WALWriter {
 public:
+  using CompletionCallback = std::function<void(bool)>;
+
+  struct WALTask {
+    std::shared_ptr<std::deque<server::PendingRequest>> pendingRequestsPtr;
+    CompletionCallback completion;
+  };
+
   explicit WALWriter(const std::filesystem::path& walPath);
   ~WALWriter();
 
   WALWriter(const WALWriter&) = delete;
   WALWriter& operator=(const WALWriter&) = delete;
 
-  void append(const LogRecord& record);
-
+  void setprocessor(server::RequestProcessor* pprocessor){
+    processor_ = pprocessor;
+  }
+  void appendBatch(std::vector<server::PendingRequest> batch);
 private:
   void writeLoop();
 
@@ -27,11 +39,10 @@ private:
 
   std::mutex mtx_;
   std::condition_variable cv_;
-  std::queue<std::string> queue_;
+  std::queue<std::vector<server::PendingRequest>> batch_que_;
   bool stop_{false};
 
+  server::RequestProcessor* processor_{nullptr};
   std::thread write_thread_;
-  static constexpr size_t max_queue_size_{100000}; // 队列的最大容量
-  static constexpr std::chrono::milliseconds flush_interval_{50}; //50ms检测一次
 };
 }  // namespace wal

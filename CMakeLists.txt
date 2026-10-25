@@ -2,7 +2,16 @@ cmake_minimum_required(VERSION 3.16)
 
 project(LightKV LANGUAGES CXX)
 
+include(CTest)
+
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
+# 默认使用 Debug 编译（带调试信息）
+if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
+    set(CMAKE_BUILD_TYPE Debug CACHE STRING "Build type" FORCE)
+    set_property(CACHE CMAKE_BUILD_TYPE PROPERTY STRINGS
+        "Debug" "Release" "MinSizeRel" "RelWithDebInfo")
+endif()
 
 option(LIGHTKV_BUILD_EXAMPLES "Build LightKV examples" OFF)
 
@@ -22,9 +31,14 @@ add_library(net STATIC
     src/protocol/parser.cpp
     src/protocol/codec.cpp
     src/server/kv_server.cpp
+    src/server/WriteBatchCoordinator.cpp
+    src/server/request_processor.cpp
     src/net/EventLoopThread.cpp
     src/net/EventLoopThreadPoll.cpp
     src/storage/wal/wal_writer.cpp
+    src/storage/memtable/memtable.cpp
+    src/storage/sstable/sstable_builder.cpp
+    src/storage/sstable/sstable_reader.cpp
 )
 
 target_include_directories(net
@@ -51,6 +65,10 @@ target_include_directories(storage
 
 target_compile_options(net PRIVATE -Wall -Wextra -Wpedantic)
 target_compile_options(util PRIVATE -Wall -Wextra -Wpedantic)
+
+# Debug 模式下添加 -g 生成调试信息
+target_compile_options(net PRIVATE $<$<CONFIG:Debug>:-g>)
+target_compile_options(util PRIVATE $<$<CONFIG:Debug>:-g>)
 
 find_package(Threads REQUIRED)
 find_package(spdlog CONFIG REQUIRED)
@@ -92,6 +110,11 @@ target_link_libraries(lightkv_kv_server PRIVATE net util)
     )
     target_link_libraries(lightkv_load_test_client PRIVATE net util)
 
+    # add_executable(lightkv_simple_test_client
+    #     tests/simple_test_client.cpp
+    # )
+    # target_link_libraries(lightkv_simple_test_client PRIVATE net util)
+
     add_executable(lightkv_rbench_client
         tests/rbench_client.cpp
     )
@@ -102,7 +125,32 @@ target_link_libraries(lightkv_kv_server PRIVATE net util)
     )
     target_link_libraries(lightkv_conn_stress_test PRIVATE net util)
 
-    add_executable(lightkv_wal_test
-        tests/wal_test.cpp
-    )
-    target_link_libraries(lightkv_wal_test PRIVATE net util)
+    # add_executable(lightkv_wal_test
+    #     tests/wal_test.cpp
+    # )
+    # target_link_libraries(lightkv_wal_test PRIVATE net util)
+    # add_test(NAME lightkv_wal_test COMMAND lightkv_wal_test)
+
+    # add_executable(lightkv_sstable_test
+    #     tests/sstable_test.cpp
+    # )
+    # target_link_libraries(lightkv_sstable_test PRIVATE net util)
+    # add_test(NAME lightkv_sstable_test COMMAND lightkv_sstable_test)
+
+    # add_executable(lightkv_memtable_sstable_test
+    #     tests/memtable_sstable_test.cpp
+    # )
+    # target_link_libraries(lightkv_memtable_sstable_test PRIVATE net util)
+    # add_test(NAME lightkv_memtable_sstable_test COMMAND lightkv_memtable_sstable_test)
+
+    # add_executable(lightkv_server_e2e_test
+    #     tests/server_e2e_test.cpp
+    # )
+    # target_link_libraries(lightkv_server_e2e_test PRIVATE net util)
+    # add_test(NAME lightkv_server_e2e_test COMMAND lightkv_server_e2e_test)
+
+    # add_executable(lightkv_request_processor_test
+    #     tests/request_processor_test.cpp
+    # )
+    # target_link_libraries(lightkv_request_processor_test PRIVATE net util)
+    # add_test(NAME lightkv_request_processor_test COMMAND lightkv_request_processor_test)

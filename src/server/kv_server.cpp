@@ -1,53 +1,53 @@
 #include "server/kv_server.hpp"
-#include "protocol/codec.hpp"
 #include "protocol/parser.hpp"
 #include "protocol/request.hpp"
-#include "storage/wal/log_record.hpp"
-#include "storage/wal/wal_writer.hpp"
+#include "server/request_processor.hpp"
+#include "server/server_def.hpp"
 #include "storage/wal/wal_reader.hpp"
 #include "util/Log.hpp"
 
 namespace server {
 
 KvServer::KvServer(net::EventLoop *loop, const net::InetAddress &listenAddr, const std::filesystem::path& walPath) :
-    server_(loop, listenAddr), dispatcher_(&memtable_), walWriter_(walPath) {
-  // 启动时从WAL恢复数据
-  LOG_INFO("Recovering from WAL: {}", walPath.string());
-  wal::WALReader::Recover(walPath, memtable_);
-  LOG_INFO("WAL recovery done");
-
+  server_(loop, listenAddr), walPath_(walPath){
+  // 设置消息回调，IO 线程收到请求后转发到存储线程
   server_.setMessageCallback([this](const net::TcpServer::TcpConnectionPtr &conn,
                                     net::Buffer &data) { this->onMessage(conn, data); });
-  dispatcher_.registerHandler(
-      CommandType::GET, [this](const Request &req) { return memtable_.GET(req); });
-  dispatcher_.registerHandler(
-      CommandType::SET, [this](const Request &req) { return memtable_.SET(req); });
-  dispatcher_.registerHandler(
-      CommandType::DEL, [this](const Request &req) { return memtable_.DEL(req); });
 }
 
 void KvServer::setThreadNum(int numThreads) {
   server_.setThreadNum(numThreads);
 }
+
 void KvServer::start() {
+  initWAL();
+  writeCoordinator_.setWALWriter(walWriter_.get());
+  writeCoordinator_.start();
+  walWriter_->setprocessor(&this->reqProcessor_);
+  reqProcessor_.start();
+  
   server_.start();
 }
 
 void KvServer::onMessage(const net::TcpServer::TcpConnectionPtr &conn, net::Buffer &inputBuffer) {
   Request req;
-  if (!parserRequest(inputBuffer, req)) {
-    return;
+  while (parserRequest(inputBuffer, req)) {
+    LOG_DEBUG("cmd={} key={}", static_cast<int>(req.cmd), req.key);
+    // 将请求投递到存储线程处理（IO 线程不直接操作 memtable_）
+    PendingRequest pending = {req,conn, conn->getLoop()};
+    if (req.cmd == CommandType::GET){
+      reqProcessor_.handleRequest(pending);
+    }else {
+      writeCoordinator_.submitWriteReq(std::move(pending));
+    }
   }
-  LOG_DEBUG("cmd={} key={}", static_cast<int>(req.cmd), req.key);
-  if (req.cmd == CommandType::SET || req.cmd == CommandType::DEL) {
-    wal::LogRecord record{wal::FromCommandType(req.cmd), req.key, req.value};
-    walWriter_.append(record);
-    LOG_DEBUG("WAL wrote: type={} key={}", static_cast<int>(record.type), req.key);
-  }
-  Response rsp = dispatcher_.dispatch(req);
-  LOG_DEBUG("response: ok={} value={}", rsp.ok, rsp.value);
-  std::string rspData = encodeResponse(rsp);
-  conn->send(rspData);
 }
+void KvServer::initWAL() {
+  LOG_INFO("Recovering from WAL: {}", walPath_.string());
 
+  wal::WALReader::Recover(walPath_, reqProcessor_.getMemtable());
+
+  walWriter_ = std::make_unique<wal::WALWriter>(walPath_);
+  LOG_INFO("WAL recovery done, storage ready");
+}
 }  // namespace server

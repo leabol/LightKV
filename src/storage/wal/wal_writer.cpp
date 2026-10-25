@@ -1,13 +1,63 @@
 #include "storage/wal/wal_writer.hpp"
 
+#include <cerrno>
+#include <cstring>
+#include <mutex>
+#include <vector>
 #include <fcntl.h>
 #include <unistd.h>
-#include <cstring>
+#include <pthread.h>
 
-#include "util/crc32.hpp"
+#include "protocol/request.hpp"
+#include "server/server_def.hpp"
+#include "storage/wal/log_record.hpp"
 #include "util/Log.hpp"
+#include "util/crc32.hpp"
 
 namespace wal {
+namespace {
+
+std::string encodeRecord(const protocol::Request& req) {
+  LogRecord record{wal::RecordType(req.cmd), req.key, req.value};
+  RecordHeader header{};
+  header.key_size = record.key.size();
+  header.value_size = record.value.size();
+  header.type = static_cast<uint8_t>(record.type);
+
+  std::string buffer;
+  buffer.reserve(sizeof(header) + record.key.size() + record.value.size());
+  buffer.append(reinterpret_cast<const char*>(&header), sizeof(header));
+  buffer.append(record.key.data(), record.key.size());
+  buffer.append(record.value.data(), record.value.size());
+
+  const uint32_t crc = util::crc32::Value(
+      buffer.data() + sizeof(uint32_t), buffer.size() - sizeof(uint32_t));
+  std::memcpy(buffer.data(), &crc, sizeof(crc));
+  return buffer;
+}
+
+bool writeAll(int fd,const std::vector<server::PendingRequest>& batch) {
+  std::string writeBatch;
+  for (const auto & pending : batch){
+    writeBatch += encodeRecord(pending.request);
+  }
+  size_t written = 0;
+  size_t total_size = writeBatch.size();
+  while (written < total_size) {
+    const ssize_t result = ::write(fd, writeBatch.data() + written, total_size - written);
+    if (result > 0) {
+      written += static_cast<size_t>(result);
+      continue;
+    }
+    if (result < 0 && errno == EINTR) {
+      continue;
+    }
+    return false;
+  }
+  return true;
+}
+
+}  // namespace
 
 WALWriter::WALWriter(const std::filesystem::path& walPath) {
   fd_ = ::open(walPath.c_str(), O_WRONLY | O_APPEND | O_CREAT, 0644);
@@ -34,61 +84,65 @@ WALWriter::~WALWriter() {
   }
 }
 
-void WALWriter::append(const LogRecord& record) {
-  if (fd_ < 0) return;
-
-  wal::RecordHeader header{};
-  header.crc = 0;
-  header.key_size = record.key.size();
-  header.value_size = record.value.size();
-  header.type = static_cast<uint8_t>(record.type);
-
-  size_t total_size = sizeof(header) + record.key.size() + record.value.size();
-  std::string buffer;
-  buffer.reserve(total_size);
-  buffer.append(reinterpret_cast<const char*>(&header), sizeof(header));
-  buffer.append(record.key.data(), record.key.size());
-  buffer.append(record.value.data(), record.value.size());
-
-  uint32_t crc = util::crc32::Value(buffer.data() + sizeof(uint32_t), buffer.size() - sizeof(uint32_t));
-  std::memcpy(buffer.data(), &crc, sizeof(crc));
-
+void WALWriter::appendBatch(std::vector<server::PendingRequest> batch){
+  bool accepted = false;
+  const auto batchSize = batch.size();
+  std::size_t queueSize = 0;
+  bool stopped = false;
+  int fd = -1;
   {
-    std::unique_lock lock(mtx_);
-    // 当超过队列最大值时,直接抛弃
-    if (queue_.size() >= max_queue_size_) {
-      LOG_WARN("WAL queue full ({}), dropping record for key={}", queue_.size(), record.key);
-      return;
+    std::lock_guard<std::mutex> lock(mtx_);
+    if (fd_ >= 0 && !stop_) {
+      batch_que_.push(std::move(batch));
+      accepted = true;
+      queueSize = batch_que_.size();
     }
-    queue_.push(std::move(buffer));
+    stopped = stop_;
+    fd = fd_;
   }
+  if (!accepted) {
+    LOG_ERROR("Rejecting WAL batch: requests={} writer_stopped={} fd={}",
+              batchSize, stopped, fd);
+    processor_->handleGroupRequest(std::move(batch), false);
+    return;
+  }
+  LOG_DEBUG("WAL batch queued: requests={} queue_size={}", batchSize, queueSize);
   cv_.notify_one();
 }
 
+
 void WALWriter::writeLoop() {
+  pthread_setname_np(pthread_self(), "wal-thread"); 
+  LOG_INFO("WAL writer thread started");
   while (true) {
-    std::queue<std::string> batch;
+    std::vector<server::PendingRequest> pendings;
     {
       std::unique_lock lock(mtx_);
-      cv_.wait_for(lock, flush_interval_, [this] { return !queue_.empty() || stop_; });
+      cv_.wait(lock, [this] { return stop_ || !batch_que_.empty(); });
 
-      if (queue_.empty() && stop_) break;
+      if (stop_ && batch_que_.empty()) {
+        break;
+      }
 
-      batch.swap(queue_);
+      pendings = std::move(batch_que_.front());
+      batch_que_.pop();
     }
 
-    if (batch.empty()) continue;
-
-    std::string write_buf;
-    while (!batch.empty()) {
-      write_buf.append(batch.front());
-      batch.pop();
+    bool success = writeAll(fd_, pendings);
+    const auto batchSize = pendings.size();
+    if (success) {
+      success = ::fdatasync(fd_) == 0;
+    }
+    if (!success) {
+      LOG_ERROR("Failed to persist WAL batch: requests={} error={}",
+                batchSize, std::strerror(errno));
+    } else {
+      LOG_DEBUG("WAL batch persisted: requests={}", batchSize);
     }
 
-    ::write(fd_, write_buf.data(), write_buf.size());
-    ::fsync(fd_);
+    processor_->handleGroupRequest(std::move(pendings), success);
   }
-  LOG_INFO("writer thread is quit elegantly");
+  LOG_INFO("WAL writer thread stopped");
 }
 
 }  // namespace wal

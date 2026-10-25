@@ -8,6 +8,7 @@
 
 namespace wal {
 enum class RecordType {
+  GET,
   SET,
   DELETE
 };
