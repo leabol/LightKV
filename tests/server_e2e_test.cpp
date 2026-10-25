@@ -356,6 +356,23 @@ bool TestPartialFrames(int fd) {
   return true;
 }
 
+// 瞬时断开：发出大量请求后不读回复直接 close。
+// 服务端必须清理掉该连接的 pending 回复/缓冲，并且不能影响后续连接。
+bool TestAbruptClose() {
+  const int fd = ConnectToServer();
+  if (fd < 0) {
+    return false;
+  }
+  std::string payload;
+  for (int i = 0; i < 200; ++i) {
+    payload += EncodeRequest({"SET", "abrupt-" + std::to_string(i), std::string(1024, 'x')});
+  }
+  // 不关心是否全部写出，也不读回复
+  SendAll(fd, payload);
+  close(fd);
+  return true;
+}
+
 // pipeline：一次写入多条命令，必须按顺序拿到同样数量的回复
 bool TestPipeline(int fd) {
   std::string payload;
@@ -436,9 +453,14 @@ int main(int argc, char** argv) {
       passed = TestInlineCommands(fd) && passed;
       passed = TestPartialFrames(fd) && passed;
       passed = TestPipeline(fd) && passed;
+      passed = TestAbruptClose() && passed;
+
+      // 瞬时断开之后，新连接必须照常工作（验证 handleClose 里的清理没有破坏状态机）
+      Reply reply;
+      passed = RoundTrip(fd, {"PING"}, &reply) && ExpectEqual("断开后 PING", reply, '+', "PONG") &&
+               passed;
 
       // SET 的 +OK 是在 WAL fdatasync 之后才回的，所以这里确认过就代表已持久化
-      Reply reply;
       passed = RoundTrip(fd, {"SET", "persist-key", "persist-value"}, &reply) &&
                ExpectEqual("SET 持久化 key", reply, '+', "OK") && passed;
       passed = RoundTrip(fd, {"SET", "deleted-key", "gone"}, &reply) &&
@@ -492,20 +514,44 @@ int main(int argc, char** argv) {
   {
     const int fd = ConnectToServer();
     Reply reply;
-    bool quit_ok = fd >= 0 && RoundTrip(fd, {"QUIT"}, &reply) &&
-                   ExpectEqual("QUIT", reply, '+', "OK");
+    // 故意把 QUIT 和后续命令放在同一个 TCP 包里：QUIT 之后的命令必须被丢弃
+    bool quit_ok = fd >= 0 &&
+                   SendAll(fd, EncodeRequest({"QUIT"}) + EncodeRequest({"SET", "after-quit", "x"})) &&
+                   ReadReply(fd, &reply) && ExpectEqual("QUIT", reply, '+', "OK");
     if (quit_ok) {
-      // QUIT 之后对端应关闭连接：再读会拿到 EOF
+      // QUIT 之后对端应关闭连接：再读会拿到 EOF，且不会先收到 SET 的回复
       char c = '\0';
       quit_ok = recv(fd, &c, 1, 0) == 0;
       if (!quit_ok) {
-        std::cerr << "  FAIL QUIT 后连接未被关闭\n";
+        std::cerr << "  FAIL QUIT 后连接未被关闭（或仍在回复后续命令）\n";
       }
     }
     if (fd >= 0) {
       close(fd);
     }
     passed = quit_ok && passed;
+  }
+  StopServer(server);
+
+  // ---- 第四轮：QUIT 之后的命令确实没有执行（重启后确认）----
+  server = StartServer(executable, working_directory);
+  if (server <= 0 || !WaitForServer()) {
+    std::cerr << "server failed to start (post-quit case)\n";
+    if (server > 0) {
+      StopServer(server);
+    }
+    std::filesystem::remove_all(working_directory);
+    return 1;
+  }
+  {
+    const int fd = ConnectToServer();
+    Reply reply;
+    bool ok = fd >= 0 && RoundTrip(fd, {"GET", "after-quit"}, &reply) &&
+              ExpectNullBulk("QUIT 后的命令不应被执行", reply);
+    if (fd >= 0) {
+      close(fd);
+    }
+    passed = ok && passed;
   }
   StopServer(server);
 
