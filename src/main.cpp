@@ -6,16 +6,20 @@
 
 int main(int argc, char** argv) {
   std::string port = "8990";
-  
+
   int numThreads = 1;
   if (argc > 1) {
     numThreads = std::stoi(argv[1]);
   }
+  if (argc > 2) {
+    port = argv[2];
+  }
+  const char* walPath = argc > 3 ? argv[3] : "wal";
 
   net::EventLoop loop;
   net::InetAddress listenAddr(port);
 
-  server::KvServer srv(&loop, listenAddr,"wal");
+  server::KvServer srv(&loop, listenAddr, walPath);
   srv.setThreadNum(numThreads);
   srv.start();
 
