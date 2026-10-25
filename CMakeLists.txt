@@ -100,30 +100,18 @@ add_executable(lightkv_kv_server
 )
 target_link_libraries(lightkv_kv_server PRIVATE net util)
 
-    add_executable(lightkv_protocol_client
-        examples/protocol_client.cpp
-    )
-    target_link_libraries(lightkv_protocol_client PRIVATE net util)
 
-    add_executable(lightkv_load_test_client
-        tests/load_test_client.cpp
-    )
-    target_link_libraries(lightkv_load_test_client PRIVATE net util)
+add_executable(lightkv_conn_stress_test
+    tests/conn_stress_test.cpp
+)
+target_link_libraries(lightkv_conn_stress_test PRIVATE net util)
 
-    # add_executable(lightkv_simple_test_client
-    #     tests/simple_test_client.cpp
-    # )
-    # target_link_libraries(lightkv_simple_test_client PRIVATE net util)
-
-    add_executable(lightkv_rbench_client
-        tests/rbench_client.cpp
-    )
-    target_link_libraries(lightkv_rbench_client PRIVATE net util)
-    
-    add_executable(lightkv_conn_stress_test
-        tests/conn_stress_test.cpp
-    )
-    target_link_libraries(lightkv_conn_stress_test PRIVATE net util)
+# 端到端测试：自己 fork 服务端、自己实现 RESP 客户端，只依赖系统 socket
+add_executable(lightkv_server_e2e_test
+    tests/server_e2e_test.cpp
+)
+target_link_libraries(lightkv_server_e2e_test PRIVATE Threads::Threads)
+add_test(NAME lightkv_server_e2e_test COMMAND lightkv_server_e2e_test)
 
     # add_executable(lightkv_wal_test
     #     tests/wal_test.cpp
@@ -142,12 +130,6 @@ target_link_libraries(lightkv_kv_server PRIVATE net util)
     # )
     # target_link_libraries(lightkv_memtable_sstable_test PRIVATE net util)
     # add_test(NAME lightkv_memtable_sstable_test COMMAND lightkv_memtable_sstable_test)
-
-    # add_executable(lightkv_server_e2e_test
-    #     tests/server_e2e_test.cpp
-    # )
-    # target_link_libraries(lightkv_server_e2e_test PRIVATE net util)
-    # add_test(NAME lightkv_server_e2e_test COMMAND lightkv_server_e2e_test)
 
     # add_executable(lightkv_request_processor_test
     #     tests/request_processor_test.cpp

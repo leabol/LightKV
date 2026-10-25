@@ -74,9 +74,9 @@ int main(int argc, char** argv) {
           sock.connect(a.host, a.port);
 
           if (a.ping) {
-            // Send a simple 8-byte ping frame
-            uint8_t ping_frame[8] = {0, 0, 0, 8, 0, 0, 0, 0};
-            ssize_t sent = ::send(sock.fd(), ping_frame, 8, 0);
+            // RESP 形式的 PING：*1\r\n$4\r\nPING\r\n
+            static const char kPingFrame[] = "*1\r\n$4\r\nPING\r\n";
+            ssize_t sent = ::send(sock.fd(), kPingFrame, sizeof(kPingFrame) - 1, 0);
             if (sent <= 0) {
               failed.fetch_add(1);
               continue;
