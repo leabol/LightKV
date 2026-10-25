@@ -5,7 +5,7 @@
 #include "net/TcpConnection.hpp"
 #include "net/TcpServer.hpp"
 #include "net/buffer.hpp"
-#include "server/WriteBatchCoordinator.hpp"
+#include "server/write_batch_coordinator.hpp"
 #include "server/request_processor.hpp"
 #include "storage/wal/wal_writer.hpp"
 

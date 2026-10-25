@@ -1,4 +1,4 @@
-#include "server/WriteBatchCoordinator.hpp"
+#include "server/write_batch_coordinator.hpp"
 
 #include <cstddef>
 #include <cstring>

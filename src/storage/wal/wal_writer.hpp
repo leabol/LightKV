@@ -10,7 +10,7 @@
 
 #include "server/request_processor.hpp"
 #include "server/server_def.hpp"
-#include "server/WriteBatchCoordinator.hpp"
+#include "server/write_batch_coordinator.hpp"
 
 namespace wal {
 class WALWriter {
