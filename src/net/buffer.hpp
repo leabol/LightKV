@@ -5,8 +5,12 @@
 #include <vector>
 
 namespace net {
-static const size_t kBufferSize = 4 * 1024;
-static const size_t kMaxSize = 64 * 1024;
+constexpr static size_t kBufferSize = 4UL * 1024;
+// 单个缓冲区可增长到的上限（同时也是协议层可接受的单帧上限）
+constexpr static size_t kMaxSize = 64UL * 1024 * 1024;
+// 单次 recv 的最大读取量。
+constexpr static size_t kRecvChunk = 16UL * 1024;
+
 class Buffer {
 public:
   explicit Buffer(size_t bufferSize = kBufferSize, size_t maxSize = kMaxSize);
@@ -25,6 +29,7 @@ public:
   // len 表示整帧长度，且包含头部自身 4 字节
   uint8_t* peek(size_t len);
 
+  // 只适用于自己的协议，已弃用
   uint8_t* readPayload(size_t len);
 
   void consume(size_t len);

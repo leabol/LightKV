@@ -16,7 +16,11 @@ namespace net {
 
 TcpConnection::TcpConnection(EventLoop* loop, std::unique_ptr<Socket> sock) :
     loop_(loop), socket_(std::move(sock)), channel_(std::make_unique<Channel>(loop_, socket_->fd())),
-    outputBuffer_(net::kBufferSize, net::kMaxSize), inputBuffer_(net::kBufferSize, net::kMaxSize) {
+    outputBuffer_(net::kBufferSize, net::kMaxSize),
+    // 输入缓冲要比「单帧上限」多留一个 recv chunk 的余量：否则当缓冲里还剩半包数据时，
+    // beginWrite(kRecvChunk) 会因为 writerIndex_ + len > maxSize_ 而返回 nullptr，
+    // 即使这一帧本身完全合法也读不进来。
+    inputBuffer_(net::kBufferSize, net::kMaxSize + net::kRecvChunk) {
   // 绑定事件回调
   channel_->setReadCallback([this] { handleRead(); });
   channel_->setWriteCallback([this] { handleWrite(); });
@@ -107,10 +111,23 @@ void TcpConnection::send(const std::string& data) {
 }
 
 void TcpConnection::handleRead() {
-  static constexpr size_t kPerRecvSize = 64 * 1024;
   for (;;) {
-    void* pWrite = static_cast<void*>(inputBuffer_.beginWrite(kPerRecvSize));
-    ssize_t n = ::recv(fd(), pWrite, kPerRecvSize, 0);
+    uint8_t* pWrite = inputBuffer_.beginWrite(net::kRecvChunk);
+    if (pWrite == nullptr) {
+      // 输入缓冲已达上限：要么对端在发超过 maxSize 的超大帧，要么残留的半包数据一直
+      // 无法解析、把缓冲撑满了。两种都是这个连接上无法继续服务的状态。
+      //
+      // 注意：这里不能 break —— epoll 是 LT 模式，socket 里还有未读数据，下一轮
+      // epoll_wait 会立刻再次触发 handleRead，形成 100% CPU 的空转；也不能 continue ——
+      // 会在同一次回调里死循环，把 IO 线程彻底卡死。
+      LOG_ERROR("TcpConnection fd={} input buffer full: readable={} max={}, closing",
+                fd(),
+                inputBuffer_.readableByte(),
+                inputBuffer_.maxSize());
+      handleError(); 
+      return;
+    }
+    ssize_t n = ::recv(fd(), pWrite, net::kRecvChunk, 0);
     if (n > 0) {
       inputBuffer_.updateWrite(n);
       LOG_TRACE("TcpConnection fd={} received {} bytes", fd(), n);
