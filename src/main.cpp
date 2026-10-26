@@ -1,4 +1,5 @@
 #include <spdlog/common.h>
+#include <pthread.h>
 
 #include "net/EventLoop.hpp"
 #include "net/InetAddress.hpp"
@@ -23,6 +24,7 @@ int main(int argc, char** argv) {
   srv.setThreadNum(numThreads);
   srv.start();
 
+  pthread_setname_np(pthread_self(),  "main"); 
   loop.loop();
   return 0;
 }

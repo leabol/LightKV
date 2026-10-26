@@ -61,6 +61,8 @@ static void init_once() {
   // 7) 刷新策略：≥warn 立刻刷；后台每 2s 刷一次
   g_logger->flush_on(spdlog::level::warn);
   spdlog::flush_every(std::chrono::seconds(2));
+  
+  pthread_setname_np(pthread_self(),  "logger"); 
 }
 
 void initLogger() {
