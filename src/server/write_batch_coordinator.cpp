@@ -81,7 +81,7 @@ void WriteBatchCoordinator::submitWriteLoop(){
   LOG_INFO("Write batching thread started");
 
   std::vector<PendingRequest> batch;
-  batch.reserve(kMaxBatchSize/100);
+  batch.reserve(kMaxQueuedRequests);
   std::optional<Clock::time_point> batch_start;
   bool batchHasWrite = false;
 
@@ -100,7 +100,7 @@ void WriteBatchCoordinator::submitWriteLoop(){
         }
       }
 
-      while (!writeRequests_.empty() && pendingWriteBytes_ < kMaxBatchSize){
+      while (!writeRequests_.empty() && pendingWriteBytes_ < kMaxQueuedBytes){
         if (batch.empty()){
           batch_start = Clock::now();
         }
@@ -115,7 +115,7 @@ void WriteBatchCoordinator::submitWriteLoop(){
         batch.push_back(std::move(pending));
       }
 
-      bool isfull = pendingWriteBytes_ >= kMaxBatchSize;
+      bool isfull = pendingWriteBytes_ >= kMaxQueuedBytes;
       bool timeout = batch_start && Clock::now() >= *batch_start + kCommitWindow;
 
       if (batch.empty() || !(isfull || timeout || stop_ || !batchHasWrite)){
@@ -136,7 +136,7 @@ void WriteBatchCoordinator::submitWriteLoop(){
                 submittedCount, submittedBytes,
                 std::chrono::duration_cast<std::chrono::microseconds>(age).count());
       walWriter_->appendBatch(std::move(to_submit));
-      batch.reserve(kMaxBatchSize/100);
+      batch.reserve(kMaxQueuedRequests);
   }
   LOG_INFO("Write batching thread stopped");
 }
