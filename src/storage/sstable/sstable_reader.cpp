@@ -1,6 +1,7 @@
 #include "storage/sstable/sstable_reader.hpp"
 
 #include <algorithm>
+#include <string_view>
 #include <utility>
 
 #include "storage/sstable/sstable_format.hpp"
@@ -13,19 +14,18 @@ constexpr uint32_t kFooterSize = 12;
 constexpr uint32_t kBlockHeaderSize = 9;
 constexpr uint32_t kEntryHeaderSize = 9;
 
-bool ReadU32(const std::string& bytes, size_t* position, uint32_t* value) {
+bool ReadU32(std::string_view bytes, size_t* position, uint32_t* value) {
   if (*position > bytes.size() || bytes.size() - *position < 4) {
     return false;
   }
-  *value = static_cast<uint8_t>(bytes[*position]) |
-           (static_cast<uint32_t>(static_cast<uint8_t>(bytes[*position + 1])) << 8) |
-           (static_cast<uint32_t>(static_cast<uint8_t>(bytes[*position + 2])) << 16) |
-           (static_cast<uint32_t>(static_cast<uint8_t>(bytes[*position + 3])) << 24);
+  const auto* p = reinterpret_cast<const uint8_t*>(bytes.data() + *position);
+  *value = static_cast<uint32_t>(p[0]) | (static_cast<uint32_t>(p[1]) << 8) |
+           (static_cast<uint32_t>(p[2]) << 16) | (static_cast<uint32_t>(p[3]) << 24);
   *position += 4;
   return true;
 }
 
-bool ReadU64(const std::string& bytes, size_t* position, uint64_t* value) {
+bool ReadU64(std::string_view bytes, size_t* position, uint64_t* value) {
   if (*position > bytes.size() || bytes.size() - *position < 8) {
     return false;
   }
@@ -127,7 +127,7 @@ bool Reader::LoadIndex(uint64_t index_offset, uint32_t index_size,
   return true;
 }
 
-bool ReadBlockPayload(const std::string& block, std::string* payload,
+bool ReadBlockPayload(const std::string& block, std::string_view* payload,
                       std::string* error) {
   if (block.size() < kBlockHeaderSize) {
     if (error != nullptr) {
@@ -153,7 +153,8 @@ bool ReadBlockPayload(const std::string& block, std::string* payload,
     }
     return false;
   }
-  *payload = block.substr(kBlockHeaderSize);
+  // 只取视图，不再拷贝整个 payload（大块时这里曾经是 MB 级 memcpy）
+  *payload = std::string_view(block).substr(kBlockHeaderSize);
   if (util::crc32::Value(payload->data(), payload->size()) != checksum) {
     if (error != nullptr) {
       *error = "SSTable block checksum mismatch";
@@ -163,7 +164,7 @@ bool ReadBlockPayload(const std::string& block, std::string* payload,
   return true;
 }
 
-bool FindEntry(const std::string& payload, const std::string& key,
+bool FindEntry(std::string_view payload, std::string_view key,
                LookupResult* result, std::string* error) {
   size_t position = 0;
   while (position < payload.size()) {
@@ -186,10 +187,9 @@ bool FindEntry(const std::string& payload, const std::string& key,
       }
       return false;
     }
-    std::string entry_key = payload.substr(position, key_size);
+    // 用视图比较，避免每条记录两次 string 分配（大块扫描时开销很大）
+    const std::string_view entry_key(payload.data() + position, key_size);
     position += key_size;
-    std::string value = payload.substr(position, value_size);
-    position += value_size;
 
     if (entry_key == key) {
       if (type == value_type::deletion) {
@@ -204,9 +204,11 @@ bool FindEntry(const std::string& payload, const std::string& key,
         return false;
       }
       result->found = true;
-      result->value = std::move(value);
+      result->value.assign(payload.data() + position, value_size);
       return true;
     }
+    position += value_size;
+    // 块内 key 有序，已越过查找目标就没必继续扫
     if (entry_key > key) {
       return true;
     }
@@ -291,7 +293,7 @@ bool Reader::ReadBlock(uint64_t offset, uint32_t size, const std::string& key,
     return false;
   }
 
-  std::string payload;
+  std::string_view payload;
   return ReadBlockPayload(block, &payload, error) &&
       FindEntry(payload, key, result, error);
 }

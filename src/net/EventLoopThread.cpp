@@ -32,6 +32,7 @@ EventLoop* EventLoopThread::startLoop() {
 }
 
 void EventLoopThread::threadFunc() {
+  pthread_setname_np(pthread_self(),  "io-poller"); 
   EventLoop loop;
 
   if (tInitCallback_) {

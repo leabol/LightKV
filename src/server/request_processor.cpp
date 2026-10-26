@@ -116,7 +116,7 @@ void RequestProcessor::handleGroupRequest(std::vector<PendingRequest> requests, 
 }
 
 void RequestProcessor::processLoop() {
-pthread_setname_np(pthread_self(), "process-th"); 
+pthread_setname_np(pthread_self(), "requeset-proc"); 
 LOG_INFO("Request processing thread started");
   initDispatcher();
   {

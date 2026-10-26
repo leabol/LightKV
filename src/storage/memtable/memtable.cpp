@@ -1,6 +1,7 @@
 #include "memtable.hpp"
 
 #include <utility>
+#include <pthread.h>
 
 #include "storage/sstable/sstable_builder.hpp"
 
@@ -138,6 +139,7 @@ bool Memtable::flushToDisk(const std::shared_ptr<Storage>& storage) {
 }
 
 void Memtable::flushLoop() {
+  pthread_setname_np(pthread_self(), "flushLoop");
   while (true) {
     std::shared_ptr<Storage> immutable;
     {

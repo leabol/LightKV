@@ -17,21 +17,27 @@ inline void GenerateTable(uint32_t table[256]) {
     }
 }
 
+// 查表在首次调用时生成。用函数内 static 对象（C++11 的 magic static 保证
+// 只初始化一次且线程安全），避免原来的 `static bool init` 在多线程下
+// 出现「看到 init==true 但表还没填完」的数据竞争。
+struct Crc32Table {
+  uint32_t data[256];
+  Crc32Table() { GenerateTable(data); }
+};
+
+inline const Crc32Table& GetTable() {
+  static const Crc32Table table;
+  return table;
+}
+
 // 计算 CRC32 的核心函数
 inline uint32_t Value(const char* data, size_t size, uint32_t crc = 0) {
-    // 第一次调用可以优化把 Table 生成缓存在单例或静态变量里
-    static uint32_t table[256];
-    static bool init = false;
-    if (!init) {
-        GenerateTable(table);
-        init = true;
-    }
-
-    crc = crc ^ 0xffffffff;
-    for (size_t i = 0; i < size; i++) {
-        crc = table[(crc ^ static_cast<uint8_t>(data[i])) & 0xff] ^ (crc >> 8);
-    }
-    return crc ^ 0xffffffff;
+  const uint32_t* table = GetTable().data;
+  crc = crc ^ 0xffffffff;
+  for (size_t i = 0; i < size; i++) {
+    crc = table[(crc ^ static_cast<uint8_t>(data[i])) & 0xff] ^ (crc >> 8);
+  }
+  return crc ^ 0xffffffff;
 }
 
 } // namespace crc32

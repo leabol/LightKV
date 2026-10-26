@@ -157,7 +157,11 @@ bool Builder::Build(const std::map<std::string, data_entry>& entries,
     if (!ValidateEntry(key, entry, error)) return false;
 
     std::string encoded = EncodeEntry(entry);
-    if (encoded.size() > block_payload_limit_ && !payload.empty() &&
+    // 切块判据是「当前 payload + 本条目」是否超过阈值。
+    // 原来写成 encoded.size() > block_payload_limit_，单条记录永远小于阈值，
+    // 结果整个 memtable 只写成 1 个块（几 MB 到几十 MB），
+    // 每次 GET 都要读整块、对整块算 CRC、再线性扫描。
+    if (!payload.empty() && payload.size() + encoded.size() > block_payload_limit_ &&
         !WriteDataBlock(&file, &payload, &first_key, &index, error)) {
       return false;
     }
