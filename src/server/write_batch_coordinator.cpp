@@ -47,7 +47,6 @@ bool WriteBatchCoordinator::submitWriteReq(PendingRequest pending){
   const auto key = pending.request.key;
   const auto command = static_cast<int>(pending.request.cmd);
   const size_t reqBytes = pending.request.key.size() + pending.request.value.size();
-  std::size_t queueSize = 0;
   {
     std::lock_guard<std::mutex> lock(mtx_);
     if (stop_) {
@@ -64,9 +63,8 @@ bool WriteBatchCoordinator::submitWriteReq(PendingRequest pending){
     }
     queuedBytes_ += reqBytes;
     writeRequests_.push(std::move(pending));
-    queueSize = writeRequests_.size();
   }
-  LOG_DEBUG("Write request queued: cmd={} key={} queue_size={}", command, key, queueSize);
+  LOG_DEBUG("Write request queued: cmd={} key={} queue_size={}", command, key);
   cvWAL_.notify_all();
   return true;
 }
@@ -81,7 +79,7 @@ void WriteBatchCoordinator::submitWriteLoop(){
   LOG_INFO("Write batching thread started");
 
   std::vector<PendingRequest> batch;
-  batch.reserve(kMaxQueuedRequests);
+  batch.reserve(kInitialBatchCapacity);
   std::optional<Clock::time_point> batch_start;
   bool batchHasWrite = false;
 
@@ -136,7 +134,7 @@ void WriteBatchCoordinator::submitWriteLoop(){
                 submittedCount, submittedBytes,
                 std::chrono::duration_cast<std::chrono::microseconds>(age).count());
       walWriter_->appendBatch(std::move(to_submit));
-      batch.reserve(kMaxQueuedRequests);
+      batch.reserve(kInitialBatchCapacity);
   }
   LOG_INFO("Write batching thread stopped");
 }

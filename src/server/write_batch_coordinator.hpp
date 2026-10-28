@@ -22,11 +22,13 @@ class WriteBatchCoordinator {
 
   using Clock = std::chrono::steady_clock;
 
-  constexpr static auto kCommitWindow = std::chrono::milliseconds(1); // 提交窗口时间为 1 毫秒
+  constexpr static auto kCommitWindow = std::chrono::milliseconds(3); // 提交窗口时间单位毫秒
   // 队列背压上限。submitWriteReq 跑在 IO 线程上，不能阻塞等待（会卡死该 EventLoop
   // 上的所有连接），所以满了直接拒绝，由调用方回复错误并断开连接。
   constexpr static size_t kMaxQueuedRequests = 64 * 1024;
   constexpr static size_t kMaxQueuedBytes = 64UL * 1024 * 1024;
+  // batch 向量的初始预分配量。
+  constexpr static size_t kInitialBatchCapacity = 1024;
 public:
   WriteBatchCoordinator();
   ~WriteBatchCoordinator();
