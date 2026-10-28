@@ -13,6 +13,13 @@ public:
 
   Channel(EventLoop* loop, int fd) : loop_(loop), fd_(fd) {}
 
+  // 禁止拷贝/移动：Channel 会把自己（this）注册进 epoll，
+  // 一旦对象地址变化或出现副本，epoll 里的注册项就会指向错误的对象。
+  Channel(const Channel&) = delete;
+  Channel& operator=(const Channel&) = delete;
+  Channel(Channel&&) = delete;
+  Channel& operator=(Channel&&) = delete;
+
   void setReadCallback(EventCallback func) { readCallback_ = std::move(func); }
   void setWriteCallback(EventCallback func) { writeCallback_ = std::move(func); }
   void setCloseCallback(EventCallback func) { closeCallback_ = std::move(func); }

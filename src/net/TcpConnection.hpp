@@ -5,14 +5,14 @@
 #include <memory>
 #include <string>
 
+#include "net/Channel.hpp"
+#include "net/Socket.hpp"
 #include "net/buffer.hpp"
 
 
 namespace net {
 
 class Buffer;
-class Socket;
-class Channel;
 class EventLoop;
 
 class TcpConnection : public std::enable_shared_from_this<TcpConnection> {
@@ -22,14 +22,18 @@ public:
   using MessageCallback = std::function<void(const TcpConnectionPtr&, Buffer&)>;  // 可读数据
   using WriteCompleteCallback = std::function<void(const TcpConnectionPtr&)>;  // 发送缓冲清空
 
-  TcpConnection(EventLoop* loop, std::unique_ptr<Socket> sock);
+  TcpConnection(EventLoop* loop, Socket sock);
   // 便捷重载：从现有 fd 构造（内部包装为 Socket）
-  TcpConnection(EventLoop* loop, int fd);
+  explicit TcpConnection(EventLoop* loop, int fd);
   ~TcpConnection();
 
-  // 禁止拷贝，允许移动（通常不移动，连接由智能指针管理）
+  // 禁止拷贝、也不移动：连接始终由 shared_ptr 持有。
+  // 注意不能移动的关键原因：channel_ 注册到 epoll 的是 this 指针，
+  // 对象地址一变，epoll 里的 data.ptr 就成了悬空指针。
   TcpConnection(const TcpConnection&) = delete;
   TcpConnection& operator=(const TcpConnection&) = delete;
+  TcpConnection(TcpConnection&&) = delete;
+  TcpConnection& operator=(TcpConnection&&) = delete;
 
   // 用户/框架设置回调
   void setConnectionCallback(ConnectionCallback cb) { connectionCallback_ = std::move(cb); }
@@ -85,8 +89,16 @@ private:
   void maybeCloseAfterReply();
 
   EventLoop* loop_{nullptr};
-  std::unique_ptr<Socket> socket_;
-  std::unique_ptr<Channel> channel_;
+  // Socket / Channel 用值成员：两者都是「只属于本连接、随连接一起销毁」的资源，
+  // 不需要共享所有权，也没有多态，用 unique_ptr 只是多两次堆分配 + 一层间接寻址。
+  //
+  // 两个前提保证这样做是安全的：
+  //  1. TcpConnection 不可移动（拷贝已删除，因此也不会隐式生成移动构造），
+  //     成员地址稳定 —— Channel 注册到 epoll 的是 this 指针，地址不能变。
+  //  2. 声明顺序 Socket 在 Channel 之前：Channel 初始化需要 socket_.fd()；
+  //     析构顺序相反，Channel 先销毁，保证注销 epoll 时 fd 仍然有效。
+  Socket socket_;
+  Channel channel_;
 
   StateE state_{kConnecting};
 

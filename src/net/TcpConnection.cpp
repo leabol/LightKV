@@ -14,26 +14,26 @@
 
 namespace net {
 
-TcpConnection::TcpConnection(EventLoop* loop, std::unique_ptr<Socket> sock) :
-    loop_(loop), socket_(std::move(sock)), channel_(std::make_unique<Channel>(loop_, socket_->fd())),
+TcpConnection::TcpConnection(EventLoop* loop, Socket sock) :
+    loop_(loop), socket_(std::move(sock)), channel_(loop_, socket_.fd()),
     outputBuffer_(net::kBufferSize, net::kMaxSize),
     // 输入缓冲要比「单帧上限」多留一个 recv chunk 的余量：否则当缓冲里还剩半包数据时，
     // beginWrite(kRecvChunk) 会因为 writerIndex_ + len > maxSize_ 而返回 nullptr，
     // 即使这一帧本身完全合法也读不进来。
     inputBuffer_(net::kBufferSize, net::kMaxSize + net::kRecvChunk) {
   // 绑定事件回调
-  channel_->setReadCallback([this] { handleRead(); });
-  channel_->setWriteCallback([this] { handleWrite(); });
-  channel_->setCloseCallback([this] { handleClose(); });
+  channel_.setReadCallback([this] { handleRead(); });
+  channel_.setWriteCallback([this] { handleWrite(); });
+  channel_.setCloseCallback([this] { handleClose(); });
 }
 
 TcpConnection::TcpConnection(EventLoop* loop, int fd) :
-    TcpConnection(loop, std::make_unique<Socket>(fd)) {}
+    TcpConnection(loop, Socket(fd)) {}
 
 TcpConnection::~TcpConnection() = default;
 
 int TcpConnection::fd() const {
-  return socket_ ? socket_->fd() : -1;
+  return socket_.fd();
 }
 
 void TcpConnection::connectEstablished() {
@@ -42,8 +42,8 @@ void TcpConnection::connectEstablished() {
   setState(kConnected);
   LOG_DEBUG("TcpConnection fd={} established", fd());
   auto self = shared_from_this();
-  channel_->tie(self);  // 生命周期守卫
-  channel_->enableReading();
+  channel_.tie(self);  // 生命周期守卫
+  channel_.enableReading();
   if (connectionCallback_) {
     connectionCallback_(self);  // 通知连接建立
   }
@@ -52,7 +52,7 @@ void TcpConnection::connectEstablished() {
 void TcpConnection::shutdown() {
   if (state_ == kConnected) {
     setState(kDisconnecting);
-    if (!channel_->isWriting()) {
+    if (!channel_.isWriting()) {
       ::shutdown(fd(), SHUT_WR);
       LOG_INFO("TcpConnection fd={} shutdown (write closed)", fd());
     } else {
@@ -90,7 +90,7 @@ void TcpConnection::send(const std::string& data) {
     return;
   }
   LOG_TRACE("TcpConnection fd={} sending {} bytes", fd(), data.size());
-  if (!channel_->isWriting() && outputBuffer_.empty()) {
+  if (!channel_.isWriting() && outputBuffer_.empty()) {
     // 尝试直接写
     ssize_t n = ::send(fd(), data.data(), data.size(), 0);
     if (n >= 0) {
@@ -101,7 +101,7 @@ void TcpConnection::send(const std::string& data) {
                   sent,
                   data.size());
         outputBuffer_.append(data.data() + sent, data.size() - sent);
-        channel_->enableWriting();
+        channel_.enableWriting();
       } else {
         LOG_TRACE("TcpConnection fd={} sent all {} bytes directly", fd(), sent);
         if (writeCompleteCallback_) {
@@ -112,7 +112,7 @@ void TcpConnection::send(const std::string& data) {
     } else {
       if (errno == EWOULDBLOCK || errno == EAGAIN) {
         outputBuffer_.append(data);
-        channel_->enableWriting();
+        channel_.enableWriting();
       } else {
         LOG_ERROR("send error fd={} errno={} msg={}", fd(), errno, strerror(errno));
         handleError();
@@ -120,8 +120,8 @@ void TcpConnection::send(const std::string& data) {
     }
   } else {
     outputBuffer_.append(data);
-    if (!channel_->isWriting()) {
-      channel_->enableWriting();
+    if (!channel_.isWriting()) {
+      channel_.enableWriting();
     }
   }
 }
@@ -272,7 +272,7 @@ void TcpConnection::handleRead() {
 }
 
 void TcpConnection::handleWrite() {
-  if (!channel_->isWriting()) {
+  if (!channel_.isWriting()) {
     return;
   }
   LOG_TRACE(
@@ -284,7 +284,7 @@ void TcpConnection::handleWrite() {
       outputBuffer_.consume(static_cast<size_t>(n));
       if (outputBuffer_.empty()) {
         LOG_TRACE("TcpConnection fd={} write buffer emptied", fd());
-        channel_->disableWriting();
+        channel_.disableWriting();
         if (writeCompleteCallback_) {
           auto self = shared_from_this();
           writeCompleteCallback_(self);
@@ -319,7 +319,7 @@ void TcpConnection::handleClose() {
            outputBuffer_.readableByte(),
            inputBuffer_.readableByte());
   setState(kDisconnected);
-  channel_->disableAll();
+  channel_.disableAll();
 
   // 主动清空：TcpConnection 会被「在途 PendingRequest 里的 shared_ptr」延长生命周期，
   // 如果这里不释放，等待队列排空之前这些缓冲会一直占着内存
@@ -336,7 +336,7 @@ void TcpConnection::handleClose() {
     outputBuffer_.consume(outputBuffer_.readableByte());
   }
 
-  // channel_->remove(); // 可选：若需要主动从 Loop 移除
+  // channel_.remove(); // 可选：若需要主动从 Loop 移除
   if (closeCallback_) {
     // 这里会清楚tcpserver的所有权，防止tcpconnection被释放
     auto self = shared_from_this();
