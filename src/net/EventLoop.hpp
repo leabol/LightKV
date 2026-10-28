@@ -1,15 +1,14 @@
 #pragma once
 #include <atomic>
 #include <functional>
-#include <memory>
 #include <mutex>
 #include <thread>
 #include <vector>
 
-namespace net {
+#include "net/Channel.hpp"
+#include "net/EpollPoller.hpp"
 
-class Channel;
-class EpollPoller;
+namespace net {
 
 // 对epoll的分装, 对外提供更多的接口, 用来执行channel, 这个类也不拥有channel
 class EventLoop {
@@ -44,11 +43,11 @@ private:
   bool eventHandling_{false};
   bool callingPendingFunctors_{false};
 
-  std::unique_ptr<EpollPoller> poller_;
+  EpollPoller poller_;
   std::vector<Channel*> activeChannels_;
 
   int wakeupFd_{0};
-  std::unique_ptr<Channel> wakeupChannel_;
+  Channel wakeupChannel_;  // 依赖 wakeupFd_, 故必须声明在其之后
 
   mutable std::mutex mutex_;
   std::vector<Functor> pendingFunctors_;

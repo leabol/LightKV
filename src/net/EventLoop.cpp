@@ -20,19 +20,17 @@ const int kPollTimeMs = 10000;
 }
 
 EventLoop::EventLoop() :
-    threadId_(std::this_thread::get_id()), 
-    poller_(std::make_unique<EpollPoller>()),
-    wakeupFd_(createEventFd()), 
-    wakeupChannel_(std::make_unique<Channel>(this, wakeupFd_)) 
-  {
-    wakeupChannel_->setReadCallback([this]() { this->handelWakeup(); });
-    wakeupChannel_->enableReading();
-    LOG_TRACE("EventLoop is created");
-  }
+    threadId_(std::this_thread::get_id()),
+    wakeupFd_(createEventFd()),
+    wakeupChannel_(this, wakeupFd_) {
+  wakeupChannel_.setReadCallback([this]() { this->handelWakeup(); });
+  wakeupChannel_.enableReading();
+  LOG_TRACE("EventLoop is created");
+}
 
 EventLoop::~EventLoop() {
-  wakeupChannel_->disableAll();
-  wakeupChannel_->remove();
+  wakeupChannel_.disableAll();
+  wakeupChannel_.remove();
   ::close(wakeupFd_);
 }
 
@@ -46,7 +44,7 @@ void EventLoop::loop() {
   while (!quit_) {
     activeChannels_.clear();
     // 阻塞等待就绪事件
-    activeChannels_ = poller_->poll(kPollTimeMs);
+    activeChannels_ = poller_.poll(kPollTimeMs);
     eventHandling_ = true;
     for (auto* channel : activeChannels_) {
       channel->handleEvent();
@@ -99,12 +97,12 @@ void EventLoop::updateChannel(Channel* channel) {
     return;
   }
   assertInLoopThread();
-  poller_->updateChannel(channel);
+  poller_.updateChannel(channel);
 }
 
 void EventLoop::removeChannel(Channel* channel) {
   assertInLoopThread();
-  poller_->removeChannel(channel);
+  poller_.removeChannel(channel);
 }
 void EventLoop::wakeup() const {
   uint64_t one = 1;
