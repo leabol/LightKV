@@ -98,7 +98,7 @@ void WriteBatchCoordinator::submitWriteLoop(){
         }
       }
 
-      while (!writeRequests_.empty() && pendingWriteBytes_ < kMaxQueuedBytes){
+      while (!writeRequests_.empty() && pendingWriteBytes_ < kMaxBatchBytes){
         if (batch.empty()){
           batch_start = Clock::now();
         }
@@ -113,7 +113,7 @@ void WriteBatchCoordinator::submitWriteLoop(){
         batch.push_back(std::move(pending));
       }
 
-      bool isfull = pendingWriteBytes_ >= kMaxQueuedBytes;
+      bool isfull = pendingWriteBytes_ >= kMaxBatchBytes;
       bool timeout = batch_start && Clock::now() >= *batch_start + kCommitWindow;
 
       if (batch.empty() || !(isfull || timeout || stop_ || !batchHasWrite)){
