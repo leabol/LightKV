@@ -80,12 +80,18 @@ void TcpServer::newConnection(int sockfd, const InetAddress& peer) {
 }
 
 void TcpServer::removeConnection(const TcpConnectionPtr& conn) {
-  int fd = conn->fd();
-  auto it = connections_.find(fd);
-  if (it != connections_.end()) {
-    connections_.erase(it);
-    LOG_INFO("connection fd={} removed (remain={})", fd, connections_.size());
+  loop_->assertInLoopThread();
+  if (!conn) {
+    return;
   }
+  const int fd = conn->fd();
+  auto it = connections_.find(fd);
+  if (it == connections_.end()) {
+    return;  // 已经被移除过（例如关服路径先清理过）
+  }
+  assert(it->second == conn);
+  connections_.erase(it);
+  LOG_INFO("connection fd={} removed (remain={})", fd, connections_.size());
 }
 
 }  // namespace net

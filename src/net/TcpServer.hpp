@@ -47,7 +47,7 @@ public:
 
 private:
   void newConnection(int sockfd, const InetAddress& peer);  // Acceptor 回调
-  void removeConnection(const TcpConnectionPtr& conn);      // 连接关闭回调
+  void removeConnection(const TcpConnectionPtr& conn);     // 连接关闭回调
 
   EventLoop* loop_{nullptr};
   Acceptor acceptor_;  // 监听 + 接收
