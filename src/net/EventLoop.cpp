@@ -29,7 +29,6 @@ EventLoop::EventLoop() :
 }
 
 EventLoop::~EventLoop() {
-  wakeupChannel_.disableAll();
   wakeupChannel_.remove();
   ::close(wakeupFd_);
 }

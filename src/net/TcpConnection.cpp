@@ -71,7 +71,7 @@ void TcpConnection::forceClose() {
 void TcpConnection::send(const std::string& data) {
   // kDisconnecting 仍允许写：QUIT 的 +OK 发出后进入优雅关闭，handleWrite 会在
   // outputBuffer 排空后才真正 SHUT_WR，这期间还可能有回复要追加。
-  if (state_ != kConnected && state_ != kDisconnecting) {
+  if (state_ == kConnecting || state_ == kDisconnected) {
     LOG_WARN("TcpConnection fd={} send failed: not connected", fd());
     return;
   }
@@ -319,7 +319,7 @@ void TcpConnection::handleClose() {
            outputBuffer_.readableByte(),
            inputBuffer_.readableByte());
   setState(kDisconnected);
-  channel_.disableAll();
+  channel_.remove();
 
   // 主动清空：TcpConnection 会被「在途 PendingRequest 里的 shared_ptr」延长生命周期，
   // 如果这里不释放，等待队列排空之前这些缓冲会一直占着内存
@@ -336,7 +336,6 @@ void TcpConnection::handleClose() {
     outputBuffer_.consume(outputBuffer_.readableByte());
   }
 
-  // channel_.remove(); // 可选：若需要主动从 Loop 移除
   if (closeCallback_) {
     // 这里会清楚tcpserver的所有权，防止tcpconnection被释放
     auto self = shared_from_this();
