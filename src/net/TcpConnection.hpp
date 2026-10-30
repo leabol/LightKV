@@ -113,6 +113,7 @@ private:
   uint64_t closeAfterReplySeq_{0};             // 输出到该序号后关闭写端（QUIT）
   bool hasCloseAfterReply_{false};
   bool quitReceived_{false};                   // QUIT 已处理，后续字节一律丢弃
+  bool peerClosed_{false};                     // 对端连接关闭
 
   ConnectionCallback connectionCallback_;
   MessageCallback messageCallback_;

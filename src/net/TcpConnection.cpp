@@ -214,10 +214,20 @@ void TcpConnection::flushOrderedReplies() {
 
 void TcpConnection::maybeCloseAfterReply() {
   loop_->assertInLoopThread();
+  if (state_ == kDisconnected) {
+    return;
+  }
+
   // QUIT：等它前面所有回复都输出完，再关闭写端（shutdown 会等 outputBuffer 排空）
   if (hasCloseAfterReply_ && nextReplySeq_ > closeAfterReplySeq_) {
     hasCloseAfterReply_ = false;
     shutdown();
+  }
+
+  if (peerClosed_ && nextReplySeq_ >= issuedRequestSeq_ && outputBuffer_.empty() &&
+      !channel_.isWriting()) {
+    LOG_INFO("TcpConnection fd={} replies flushed after peer half-close, closing", fd());
+    handleClose();
   }
 }
 
@@ -253,9 +263,13 @@ void TcpConnection::handleRead() {
       continue;
     }
 
-    if (n == 0) {  // 对端关闭
-      LOG_INFO("TcpConnection fd={} peer closed", fd());
-      handleClose();
+    if (n == 0) {
+      // 对端 shutdown(SHUT_WR)：它不再发数据，但可能仍在读我们的回复。
+      LOG_INFO("TcpConnection fd={} peer closed write side", fd());
+      peerClosed_ = true;
+      // 不会再有数据了。同时避免 LT 模式下 EOF 持续可读导致每轮都进 handleRead。
+      channel_.disableReading();
+      maybeCloseAfterReply();
       break;
     }
     if (errno == EWOULDBLOCK || errno == EAGAIN) {
@@ -307,6 +321,7 @@ void TcpConnection::handleWrite() {
       break;
     }
   }
+  maybeCloseAfterReply();
 }
 
 void TcpConnection::handleClose() {
