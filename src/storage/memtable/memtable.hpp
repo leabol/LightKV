@@ -25,8 +25,7 @@ struct Entry {
 };
 using Storage = std::map<std::string, Entry>;
 
-// 触发刷盘的阈值：记录条数（不是字节数）。达到后整表转为 immutable，
-// 由 flushLoop 写成一个 SSTable 文件。value=128B 时一张表约 9.6MB。
+// 触发刷盘的阈值：记录条数（不是字节数）。达到后整表转为 immutable，由 flushLoop 写成一个 SSTable 文件。
 constexpr static size_t kMaxMemtableSize = 64UL * 1024UL;
 
 public:
